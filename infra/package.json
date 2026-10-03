@@ -1,0 +1,14 @@
+{
+  "name": "valkey-game-tracker-infra",
+  "private": true,
+  "scripts": {
+    "cdk": "cdk"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.272.0",
+    "constructs": "^10.8.1"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.1144.0"
+  }
+}

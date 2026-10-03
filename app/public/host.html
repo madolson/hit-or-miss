@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Valkey Race · Host</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  body { height: 100vh; overflow: hidden; }
+  .layout { display: grid; grid-template-columns: 340px 1fr 420px; gap: 1em; padding: 1em; height: 100%; }
+  .col { display: flex; flex-direction: column; gap: 1em; min-height: 0; }
+  #qr { width: 100%; border-radius: 10px; }
+  #join-url { word-break: break-all; font-size: .9em; }
+  #q { font-size: 2.2em; }
+  .opt { font-size: 1.4em; min-height: 4.5em; }
+  .cmds-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  #cmds { flex: 1; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <div class="col">
+    <div class="card">
+      <canvas id="qr"></canvas>
+      <p>Scan to join<br><span id="join-url" class="muted"></span></p>
+      <p><strong id="players">0</strong> players</p>
+    </div>
+    <div class="card">
+      <form id="key-form" class="hidden">
+        <input id="key" type="password" placeholder="Host key">
+      </form>
+      <button id="next" style="width:100%">Next round</button>
+      <p id="host-status" class="muted"></p>
+    </div>
+  </div>
+
+  <div class="col">
+    <div id="idle" class="card"><h1>Valkey Race</h1><p class="muted">Lock in within 5 seconds for 5000 points. After that, everyone's guesses show and points drop to zero at 15 seconds.</p></div>
+    <div id="round" class="hidden">
+      <p class="muted">Round <span id="round-n"></span></p>
+      <h1 id="q"></h1>
+      <div class="timer" id="timer"><span></span><span></span></div>
+      <div class="bar"><div id="bar"></div></div>
+      <div class="options" id="options"></div>
+    </div>
+    <div class="card">
+      <h3>Leaderboard</h3>
+      <ul class="board" id="board"></ul>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card cmds-card">
+      <h3>Valkey commands <span class="muted" id="cmd-rate"></span></h3>
+      <div class="cmds" id="cmds"></div>
+    </div>
+  </div>
+</div>
+<script src="/qrcode.js"></script>
+<script src="/qr.js"></script>
+<script src="/game.js"></script>
+<script src="/commands.js"></script>
+<script>
+const joinUrl = `${location.origin}/play`;
+drawQR($('qr'), joinUrl, 600);
+$('join-url').textContent = joinUrl;
+
+function render() {
+  show('idle', !round);
+  show('round', !!round);
+  if (!round) return;
+  $('round-n').textContent = round.n;
+  $('q').textContent = round.q;
+  renderOptions($('options'), round, null);
+}
+
+$('key').value = localStorage.hostKey || '';
+show('key-form', !localStorage.hostKey);
+$('next').onclick = async () => {
+  localStorage.hostKey = $('key').value;
+  const res = await fetch('/api/next', { method: 'POST', headers: { 'x-host-key': localStorage.hostKey } });
+  const body = await res.json();
+  $('host-status').textContent = res.ok ? '' : body.error;
+  if (res.status === 403) { delete localStorage.hostKey; show('key-form', true); }
+  else show('key-form', false);
+};
+
+async function load() {
+  const s = await (await fetch('/api/state')).json();
+  syncClock(s.serverNow);
+  $('players').textContent = s.players;
+  renderBoard($('board'), s.top);
+  round = s.round ? newRound(s.round) : null;
+  render();
+}
+
+const es = new EventSource('/events?commands');
+es.onopen = load;
+es.addEventListener('players', (e) => { $('players').textContent = JSON.parse(e.data).count; });
+followRounds(es, render, (d) => renderBoard($('board'), d.top));
+watchCommands(es, $('cmds'), $('cmd-rate'));
+
+(function tick() {
+  if (round) renderTimer($('timer'), $('bar'), round);
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

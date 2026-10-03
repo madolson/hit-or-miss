@@ -1,0 +1,17 @@
+[
+  { "q": "In what year was Valkey forked from Redis?", "options": ["2022", "2023", "2024", "2025"], "answer": 2 },
+  { "q": "Which foundation hosts the Valkey project?", "options": ["Apache Software Foundation", "Linux Foundation", "Eclipse Foundation", "Python Software Foundation"], "answer": 1 },
+  { "q": "Which Pac-Man ghost is made up?", "options": ["Blinky", "Inky", "Winky", "Clyde"], "answer": 2 },
+  { "q": "What is Valkey's default port?", "options": ["5432", "6379", "8080", "11211"], "answer": 1 },
+  { "q": "What is the best-selling video game of all time?", "options": ["Tetris", "GTA V", "Wii Sports", "Minecraft"], "answer": 3 },
+  { "q": "Which Valkey data type is an append-only log of entries with IDs?", "options": ["Stream", "List", "Set", "HyperLogLog"], "answer": 0 },
+  { "q": "Which company makes the PlayStation?", "options": ["Nintendo", "Microsoft", "Sega", "Sony"], "answer": 3 },
+  { "q": "Which command adds a member with a score to a sorted set?", "options": ["SADD", "ZADD", "HSET", "LPUSH"], "answer": 1 },
+  { "q": "Tetris was created in which country?", "options": ["Japan", "United States", "Soviet Union", "Finland"], "answer": 2 },
+  { "q": "Which Valkey command atomically increments an integer?", "options": ["INCR", "ADD", "PLUS", "SETNX"], "answer": 0 },
+  { "q": "Which game has the Battle Bus?", "options": ["Apex Legends", "Fortnite", "PUBG", "Overwatch"], "answer": 1 },
+  { "q": "What is the hero's name in The Legend of Zelda?", "options": ["Zelda", "Ganon", "Epona", "Link"], "answer": 3 },
+  { "q": "What unit does EXPIRE take?", "options": ["Seconds", "Milliseconds", "Minutes", "Microseconds"], "answer": 0 },
+  { "q": "Which console did Nintendo release in 2017?", "options": ["Wii U", "Switch", "GameCube", "3DS"], "answer": 1 },
+  { "q": "In what year was Super Mario Bros. first released?", "options": ["1981", "1983", "1985", "1988"], "answer": 2 }
+]

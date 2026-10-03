@@ -1,0 +1,307 @@
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { loggedClient, rawClient, logger, COMMAND_STREAM } from './valkey.js';
+
+const ROUND_MS = 15000;
+const FULL_MS = 5000;
+const MAX_POINTS = 5000;
+const PORT = Number(process.env.PORT || 8080);
+const HOST_KEY = process.env.HOST_KEY || 'dev';
+
+const K = {
+  players: 'players',          // hash pid -> name
+  board: 'leaderboard',        // zset pid -> total points
+  roundN: 'game:round:n',      // counter
+  round: 'game:round',         // hash n, start, qi of the current round
+  active: 'game:active',       // lock held while a round runs
+  events: 'game:events',       // stream fanned out to every server
+  questions: 'questions',      // list of JSON questions
+  seeded: 'questions:seeded',
+  answers: (n) => `round:${n}:answers`, // hash pid -> choice
+  points: (n) => `round:${n}:points`,   // hash pid -> points
+};
+
+const db = loggedClient();
+const eventsReader = loggedClient(); // dedicated connection for blocking XREAD
+const commandsReader = rawClient();
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function fields(arr) {
+  const o = {};
+  for (let i = 0; i < arr.length; i += 2) o[arr[i]] = arr[i + 1];
+  return o;
+}
+
+function points(elapsed) {
+  if (elapsed <= FULL_MS) return MAX_POINTS;
+  return Math.max(0, Math.round((MAX_POINTS * (ROUND_MS - elapsed)) / (ROUND_MS - FULL_MS)));
+}
+
+async function now() {
+  const [s, us] = await db.time();
+  return Number(s) * 1000 + Math.floor(Number(us) / 1000);
+}
+
+async function seed() {
+  if (await db.set(K.seeded, '1', 'NX')) {
+    const qs = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, 'questions.json'), 'utf8'));
+    await db.rpush(K.questions, ...qs.map((q) => JSON.stringify(q)));
+  }
+}
+
+async function getRound() {
+  const r = await db.hgetall(K.round);
+  return r.n ? { n: Number(r.n), start: Number(r.start), qi: Number(r.qi) } : null;
+}
+
+const question = async (qi) => JSON.parse(await db.lindex(K.questions, qi));
+
+async function names(pids) {
+  if (!pids.length) return {};
+  const vals = await db.hmget(K.players, ...pids);
+  return Object.fromEntries(pids.map((p, i) => [p, vals[i]]));
+}
+
+async function guesses(n) {
+  const answers = await db.hgetall(K.answers(n));
+  const nm = await names(Object.keys(answers));
+  return Object.entries(answers).map(([pid, c]) => ({ pid, name: nm[pid], choice: Number(c) }));
+}
+
+async function leaderboard() {
+  const flat = await db.zrevrange(K.board, 0, -1, 'WITHSCORES');
+  const pids = flat.filter((_, i) => i % 2 === 0);
+  const nm = await names(pids);
+  return pids.map((pid, i) => ({ pid, name: nm[pid], score: Number(flat[i * 2 + 1]), rank: i + 1 }));
+}
+
+// ---- Server-sent events to browsers connected to this process ----
+
+const clients = new Set();
+
+function send(c, type, data) {
+  c.res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+function broadcast(type, data, filter = () => true) {
+  for (const c of clients) if (filter(c)) send(c, type, data);
+}
+
+setInterval(() => { for (const c of clients) c.res.write(': ping\n\n'); }, 15000);
+
+// ---- Round timeline. Every process runs its own timers off the round start. ----
+
+let scheduledRound = 0;
+let revealedRound = 0;
+
+function schedule(r) {
+  if (r.n <= scheduledRound) return;
+  scheduledRound = r.n;
+  setTimeout(() => reveal(r.n).catch(console.error), r.start + FULL_MS - Date.now());
+  setTimeout(() => endRound(r).catch(console.error), r.start + ROUND_MS + 250 - Date.now());
+}
+
+async function reveal(n) {
+  // Set before reading so guesses committed after the read still go out live.
+  revealedRound = n;
+  broadcast('reveal', { n, guesses: await guesses(n) });
+}
+
+async function endRound(r) {
+  const [q, pts, board] = await Promise.all([question(r.qi), db.hgetall(K.points(r.n)), leaderboard()]);
+  const byPid = Object.fromEntries(board.map((e) => [e.pid, e]));
+  const top = board.slice(0, 10);
+  for (const c of clients) {
+    send(c, 'end', {
+      n: r.n, correct: q.answer, top,
+      me: c.pid ? { points: Number(pts[c.pid] ?? 0), answered: c.pid in pts, ...byPid[c.pid] } : null,
+    });
+  }
+}
+
+async function onEvent(e) {
+  if (e.type === 'round') {
+    const r = { n: Number(e.n), start: Number(e.start), qi: Number(e.qi) };
+    schedule(r);
+    broadcast('round', { n: r.n, start: r.start, serverNow: Date.now(), ...JSON.parse(e.question) });
+  } else if (e.type === 'guess') {
+    if (revealedRound >= Number(e.n)) {
+      broadcast('guess', { n: Number(e.n), pid: e.pid, name: e.name, choice: Number(e.choice) });
+    }
+  } else if (e.type === 'join') {
+    broadcast('players', { count: Number(e.count) });
+  }
+}
+
+async function tailEvents() {
+  const last = await db.xrevrange(K.events, '+', '-', 'COUNT', 1);
+  let id = last[0]?.[0] ?? '0-0';
+  for (;;) {
+    try {
+      const res = await eventsReader.xread('BLOCK', 0, 'STREAMS', K.events, id);
+      for (const [, entries] of res ?? []) {
+        for (const [eid, f] of entries) {
+          id = eid;
+          await onEvent(fields(f)).catch(console.error);
+        }
+      }
+    } catch (err) {
+      console.error('events:', err.message);
+      await sleep(1000);
+    }
+  }
+}
+
+const toCmd = ([id, f]) => ({ id, ...fields(f) });
+
+async function tailCommands() {
+  let id = '$';
+  for (;;) {
+    try {
+      const res = await commandsReader.xread('BLOCK', 0, 'COUNT', 500, 'STREAMS', COMMAND_STREAM, id);
+      for (const [, entries] of res ?? []) {
+        id = entries[entries.length - 1][0];
+        broadcast('cmds', entries.map(toCmd), (c) => c.cmds);
+      }
+    } catch (err) {
+      console.error('commands:', err.message);
+      await sleep(1000);
+    }
+  }
+}
+
+// ---- HTTP ----
+
+async function state(pid) {
+  const [r, count, board] = await Promise.all([getRound(), db.hlen(K.players), leaderboard()]);
+  const me = pid ? board.find((e) => e.pid === pid) ?? null : null;
+  const out = { serverNow: Date.now(), players: count, top: board.slice(0, 10), me, round: null };
+  if (r) {
+    const q = await question(r.qi);
+    const elapsed = Date.now() - r.start;
+    out.round = { n: r.n, start: r.start, q: q.q, options: q.options };
+    if (pid) out.round.myChoice = (await db.hget(K.answers(r.n), pid)) ?? null;
+    if (elapsed >= FULL_MS) out.round.guesses = await guesses(r.n);
+    if (elapsed >= ROUND_MS) {
+      out.round.correct = q.answer;
+      if (pid && me) {
+        const p = await db.hget(K.points(r.n), pid);
+        out.round.me = { points: Number(p ?? 0), answered: p !== null, ...me };
+      }
+    }
+  }
+  return out;
+}
+
+async function join(pid, body) {
+  const name = String(body.name ?? '').trim().slice(0, 20);
+  if (!name) return [400, { error: 'name required' }];
+  pid ||= crypto.randomUUID();
+  await db.hset(K.players, pid, name);
+  await db.zadd(K.board, 'NX', 0, pid);
+  const count = await db.hlen(K.players);
+  await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'join', 'count', count);
+  return [200, { pid, name }, pid];
+}
+
+async function answer(pid, body) {
+  const name = pid && (await db.hget(K.players, pid));
+  if (!name) return [401, { error: 'join first' }];
+  const n = Number(body.n);
+  const choice = Number(body.choice);
+  if (![0, 1, 2, 3].includes(choice)) return [400, { error: 'bad choice' }];
+  const r = await getRound();
+  if (!r || r.n !== n) return [409, { error: 'not the current round' }];
+  const elapsed = (await now()) - r.start;
+  if (elapsed >= ROUND_MS) return [409, { error: 'round over' }];
+  if (!(await db.hsetnx(K.answers(n), pid, choice))) return [409, { error: 'already locked in' }];
+  const q = await question(r.qi);
+  const pts = choice === q.answer ? points(elapsed) : 0;
+  await Promise.all([
+    db.hset(K.points(n), pid, pts),
+    db.zincrby(K.board, pts, pid),
+    db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'guess', 'n', n, 'pid', pid, 'name', name, 'choice', choice),
+  ]);
+  return [200, { ok: true, elapsed }];
+}
+
+async function next(key) {
+  if (key !== HOST_KEY) return [403, { error: 'bad host key' }];
+  if (!(await db.set(K.active, '1', 'PX', ROUND_MS + 1000, 'NX'))) return [409, { error: 'round in progress' }];
+  const n = await db.incr(K.roundN);
+  const qi = (n - 1) % (await db.llen(K.questions));
+  const q = await question(qi);
+  const start = await now();
+  await db.hset(K.round, { n, start, qi });
+  await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'round', 'n', n, 'start', start, 'qi', qi,
+    'question', JSON.stringify({ q: q.q, options: q.options }));
+  return [200, { n }];
+}
+
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
+const PUBLIC = path.join(import.meta.dirname, 'public');
+const files = Object.fromEntries(fs.readdirSync(PUBLIC).map((f) => [f, fs.readFileSync(path.join(PUBLIC, f))]));
+const PAGES = { '/play': 'play.html', '/host': 'host.html', '/commands': 'commands.html' };
+
+function cookiePid(req) {
+  const m = /(?:^|;\s*)pid=([0-9a-f-]{36})/.exec(req.headers.cookie ?? '');
+  return m?.[1];
+}
+
+async function readJson(req) {
+  let s = '';
+  for await (const chunk of req) {
+    s += chunk;
+    if (s.length > 4096) throw new Error('body too large');
+  }
+  return s ? JSON.parse(s) : {};
+}
+
+function json(res, status, body, pid) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (pid) headers['Set-Cookie'] = `pid=${pid}; Path=/; Max-Age=2592000; SameSite=Lax; HttpOnly`;
+  res.writeHead(status, headers).end(JSON.stringify(body));
+}
+
+async function handle(req, res) {
+  const url = new URL(req.url, 'http://x');
+  const pid = cookiePid(req);
+  const route = `${req.method} ${url.pathname}`;
+
+  if (route === 'GET /healthz') return res.writeHead(200).end('ok');
+  if (route === 'GET /') return res.writeHead(302, { Location: '/play' }).end();
+
+  const file = PAGES[url.pathname] ?? url.pathname.slice(1);
+  if (req.method === 'GET' && files[file]) {
+    return res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] ?? 'application/octet-stream' }).end(files[file]);
+  }
+
+  if (route === 'GET /events') {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.flushHeaders();
+    const c = { res, pid, cmds: url.searchParams.has('commands') };
+    clients.add(c);
+    req.on('close', () => clients.delete(c));
+    if (c.cmds) send(c, 'cmds', (await logger.xrevrange(COMMAND_STREAM, '+', '-', 'COUNT', 100)).reverse().map(toCmd));
+    return;
+  }
+
+  if (route === 'GET /api/state') return json(res, 200, await state(pid));
+  if (route === 'POST /api/join') return json(res, ...(await join(pid, await readJson(req))));
+  if (route === 'POST /api/answer') return json(res, ...(await answer(pid, await readJson(req))));
+  if (route === 'POST /api/next') return json(res, ...(await next(req.headers['x-host-key'])));
+
+  res.writeHead(404).end('not found');
+}
+
+await seed();
+const current = await getRound();
+if (current) schedule(current);
+tailEvents();
+tailCommands();
+http.createServer((req, res) => handle(req, res).catch((err) => {
+  console.error(err);
+  if (!res.headersSent) json(res, 500, { error: 'internal error' });
+})).listen(PORT, () => console.log(`listening on :${PORT}`));

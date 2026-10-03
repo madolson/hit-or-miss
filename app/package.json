@@ -1,0 +1,11 @@
+{
+  "name": "valkey-game-tracker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "iovalkey": "^0.4.0"
+  }
+}

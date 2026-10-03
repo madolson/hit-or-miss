@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Valkey Race</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  main { max-width: 560px; margin: 0 auto; padding: 1em; }
+  header { display: flex; align-items: center; gap: .6em; margin-bottom: 1em; }
+  header img { height: 32px; }
+  header .score { margin-left: auto; font-variant-numeric: tabular-nums; }
+  #join-form { display: flex; flex-direction: column; gap: .7em; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="/valkey-logo.svg" alt="">
+    <strong id="me-name">Valkey Race</strong>
+    <span class="score" id="me-score"></span>
+  </header>
+
+  <section id="join" class="card hidden">
+    <h2>Join the game</h2>
+    <form id="join-form">
+      <input id="name" maxlength="20" placeholder="Your name" autocomplete="nickname" required>
+      <button>Join</button>
+    </form>
+  </section>
+
+  <section id="wait" class="card hidden">
+    <h2>You're in.</h2>
+    <p class="muted">Waiting for the host to start the next round.</p>
+  </section>
+
+  <section id="round" class="hidden">
+    <p class="muted">Round <span id="round-n"></span></p>
+    <h2 id="q"></h2>
+    <div class="timer" id="timer"><span></span><span></span></div>
+    <div class="bar"><div id="bar"></div></div>
+    <div class="options" id="options"></div>
+    <p id="status" class="muted"></p>
+  </section>
+</main>
+<script src="/game.js"></script>
+<script>
+let me = null;
+
+async function api(path, body) {
+  const res = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
+  return [res.status, await res.json()];
+}
+
+function renderMe() {
+  $('me-name').textContent = me ? me.name : 'Valkey Race';
+  $('me-score').textContent = me && me.score != null ? `${me.score} pts${me.rank ? ` · #${me.rank}` : ''}` : '';
+}
+
+function render() {
+  show('join', !me);
+  show('wait', !!me && !round);
+  show('round', !!me && !!round);
+  renderMe();
+  if (!me || !round) return;
+  $('round-n').textContent = round.n;
+  $('q').textContent = round.q;
+  renderOptions($('options'), round, pick);
+  let status = '';
+  if (round.correct !== null) {
+    status = round.result?.answered
+      ? (round.result.points ? `Correct! +${round.result.points}` : 'Wrong answer. 0 points.')
+      : 'You did not answer.';
+  } else if (round.myChoice !== null) {
+    status = round.lockedAt != null ? `Locked in at ${(round.lockedAt / 1000).toFixed(1)}s.` : 'Locked in.';
+  }
+  $('status').textContent = status;
+}
+
+async function pick(choice) {
+  round.myChoice = choice;
+  render();
+  const [code, body] = await api('/api/answer', { n: round.n, choice });
+  if (code === 200) round.lockedAt = body.elapsed;
+  else $('status').textContent = body.error;
+}
+
+async function load() {
+  const [, s] = await api('/api/state');
+  syncClock(s.serverNow);
+  me = s.me;
+  round = s.round ? newRound(s.round) : null;
+  if (round?.me) round.result = round.me;
+  render();
+}
+
+function connect() {
+  const es = new EventSource('/events');
+  es.onopen = load; // resync after any reconnect
+  followRounds(es, render, (d) => {
+    round.result = d.me;
+    if (d.me) Object.assign(me, { score: d.me.score, rank: d.me.rank });
+  });
+}
+
+$('join-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const [code, body] = await api('/api/join', { name: $('name').value });
+  if (code !== 200) return alert(body.error);
+  connect();
+};
+
+let wasOpen = false;
+(function tick() {
+  if (round && me) {
+    const open = renderTimer($('timer'), $('bar'), round);
+    if (wasOpen && !open) render(); // lock the buttons when time runs out
+    wasOpen = open;
+  }
+  requestAnimationFrame(tick);
+})();
+
+load().then(() => me && connect());
+</script>
+</body>
+</html>

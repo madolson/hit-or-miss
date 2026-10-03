@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Valkey Race · Commands</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  body { padding: 1em; height: 100vh; overflow: hidden; }
+  .cmds { font-size: 14px; }
+</style>
+</head>
+<body>
+<h2>Valkey commands <span class="muted" id="cmd-rate"></span></h2>
+<div class="cmds" id="cmds"></div>
+<script src="/game.js"></script>
+<script src="/commands.js"></script>
+<script>
+watchCommands(new EventSource('/events?commands'), $('cmds'), $('cmd-rate'));
+</script>
+</body>
+</html>
