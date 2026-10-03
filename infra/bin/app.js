@@ -83,4 +83,4 @@ class GameStack extends cdk.Stack {
 }
 
 const app = new cdk.App();
-new GameStack(app, 'ValkeyGameTracker', { env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: 'us-west-2' } });
+new GameStack(app, 'ValkeyGameTrackerDurable', { env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: 'us-west-2' } });
