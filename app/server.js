@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { client, monitor as startMonitor, COMMAND_STREAM } from './valkey.js';
+import { client, primaryOf, monitor as startMonitor, COMMAND_STREAM } from './valkey.js';
 
 const ROUND_MS = 15000;
 const FULL_MS = 5000;
@@ -161,11 +161,16 @@ async function tailEvents() {
 const SRC = crypto.randomUUID(); // lease owner id for this process
 const LEASE_MS = 10000;
 const RENEW = "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end return 0";
-let monitor = null;
+let monitor = null; // { conn, addr } of the MONITOR connection
 
 function fmt(args) {
   const s = args.join(' ');
   return s.length > 200 ? s.slice(0, 200) + '…' : s;
+}
+
+function stopMonitor() {
+  monitor?.conn.disconnect();
+  monitor = null;
 }
 
 async function leadMonitor() {
@@ -173,18 +178,20 @@ async function leadMonitor() {
     try {
       const lead = (await db.set(K.monitorLeader, SRC, 'PX', LEASE_MS, 'NX'))
         || (await db.eval(RENEW, 1, K.monitorLeader, SRC, LEASE_MS));
+      const primary = primaryOf(db);
+      const addr = `${primary.options.host}:${primary.options.port}`;
+      // Drop the lease, or follow the primary after a failover.
+      if (monitor && (!lead || monitor.addr !== addr)) stopMonitor();
       if (lead && !monitor) {
-        monitor = await startMonitor();
-        monitor.on('monitor', (time, args, source) => {
+        const conn = await startMonitor(primary);
+        monitor = { conn, addr };
+        conn.on('monitor', (time, args, source) => {
           // Skip traffic on the stream itself, or every entry would log another.
           if (args.includes(COMMAND_STREAM)) return;
           logger.xadd(COMMAND_STREAM, 'MAXLEN', '~', 5000, '*',
             'src', source, 'cmd', args[0].toUpperCase(), 'args', fmt(args.slice(1))).catch(() => {});
         });
-        monitor.on('end', () => { monitor = null; });
-      } else if (!lead && monitor) {
-        monitor.disconnect();
-        monitor = null;
+        conn.on('end', () => { if (monitor?.conn === conn) monitor = null; });
       }
     } catch (err) {
       console.error('monitor:', err.message);

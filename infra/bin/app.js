@@ -31,8 +31,12 @@ class GameStack extends cdk.Stack {
       replicationGroupDescription: 'valkey game tracker',
       engine: 'valkey',
       engineVersion: '9.1',
-      cacheNodeType: 'cache.t4g.small',
-      numCacheClusters: 2, // 1 primary, 1 replica
+      cacheNodeType: 'cache.m7g.large',
+      // Durability requires cluster mode. One shard: 1 primary, 1 replica.
+      clusterMode: 'enabled',
+      numNodeGroups: 1,
+      replicasPerNodeGroup: 1,
+      cacheParameterGroupName: 'default.valkey9.cluster.on',
       automaticFailoverEnabled: true,
       multiAzEnabled: true,
       durability: 'sync',
@@ -60,8 +64,8 @@ class GameStack extends cdk.Stack {
         image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../app'), { platform: Platform.LINUX_ARM64 }),
         containerPort: 8080,
         environment: {
-          VALKEY_HOST: cache.attrPrimaryEndPointAddress,
-          VALKEY_PORT: cache.attrPrimaryEndPointPort,
+          VALKEY_HOST: cache.attrConfigurationEndPointAddress,
+          VALKEY_PORT: cache.attrConfigurationEndPointPort,
           VALKEY_TLS: '1',
         },
         secrets: { HOST_KEY: ecs.Secret.fromSecretsManager(hostKey) },

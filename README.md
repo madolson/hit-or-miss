@@ -14,7 +14,7 @@ All state lives in Valkey. Every command Valkey executes, captured with `MONITOR
 
 ## Architecture
 
-ALB → 2 Fargate tasks (ARM64, Node 22) → ElastiCache Valkey 9.1 replication group with 1 primary and 1 replica, Multi-AZ, `Durability: sync`, TLS. Browsers get updates over Server-Sent Events. Each task tails the `game:events` stream with `XREAD BLOCK` and fans out to its own browsers, so any task can serve any player.
+ALB → 2 Fargate tasks (ARM64, Node 22) → ElastiCache Valkey 9.1, cluster mode with one shard (1 primary, 1 replica), Multi-AZ, `Durability: sync`, TLS, `cache.m7g.large`. Durability requires cluster mode and isn't supported on `t4g`. Browsers get updates over Server-Sent Events. Each task tails the `game:events` stream with `XREAD BLOCK` and fans out to its own browsers, so any task can serve any player.
 
 Round timing uses Valkey `TIME` as the single clock. Each task schedules its own 5s reveal and 15s end off the round's start time.
 
@@ -39,7 +39,8 @@ Commands that touch `valkey:commands` are left out of the stream. Otherwise each
 ## Run locally
 
 ```bash
-valkey-server --port 6391 --save '' &
+valkey-server --port 6391 --cluster-enabled yes --cluster-announce-ip 127.0.0.1 --save '' &
+valkey-cli -p 6391 cluster addslotsrange 0 16383
 cd app && npm ci
 VALKEY_PORT=6391 HOST_KEY=dev node server.js        # http://localhost:8080/host
 node ../test/sim.mjs dev http://localhost:8080       # end-to-end check, ~16s

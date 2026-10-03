@@ -2,15 +2,22 @@ import Valkey from 'iovalkey';
 
 export const COMMAND_STREAM = 'valkey:commands';
 
-const opts = {
+// Cluster mode with a single shard; durability requires cluster mode.
+const startup = [{
   host: process.env.VALKEY_HOST || '127.0.0.1',
   port: Number(process.env.VALKEY_PORT || 6379),
-  tls: process.env.VALKEY_TLS === '1' ? {} : undefined,
-  // After a failover the old primary turns replica; reconnect and resend.
-  reconnectOnError: (err) => (err.message.startsWith('READONLY') ? 2 : false),
+}];
+const opts = {
+  // ElastiCache TLS certificates name the hostnames, so connect by hostname.
+  dnsLookup: (address, cb) => cb(null, address),
+  redisOptions: { tls: process.env.VALKEY_TLS === '1' ? {} : undefined },
 };
 
-export const client = () => new Valkey(opts);
+export const client = () => new Valkey.Cluster(startup, opts);
 
-// The ready check's INFO reply races with MONITOR output, so skip it.
-export const monitor = () => new Valkey({ ...opts, lazyConnect: true, enableReadyCheck: false }).monitor();
+export const primaryOf = (cluster) => cluster.nodes('master')[0];
+
+// MONITOR the shard primary. The ready check's INFO reply races with MONITOR
+// output, so skip it.
+export const monitor = (node) =>
+  new Valkey({ ...node.options, lazyConnect: true, enableReadyCheck: false }).monitor();
