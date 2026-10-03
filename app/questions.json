@@ -1,6 +1,14 @@
 [
-  { "q": "Warm-up: have you used Valkey before?", "options": ["Yes, in production", "Yes, for side projects", "Not yet", "What's Valkey?"], "answer": null, "points": 0 },
-  { "q": "How many unique people have contributed code to Valkey across all its releases?", "options": ["About 280", "About 160", "About 450", "About 650"], "answer": 0, "points": 1000 },
-  { "q": "How many people have participated in valkey-io/valkey on GitHub by opening, commenting on, or reviewing an issue or PR?", "options": ["About 350", "About 550", "About 1,600", "About 950"], "answer": 3, "points": 1500 },
-  { "q": "How many GitHub stars does valkey-io/valkey have?", "options": ["About 12,000", "About 18,000", "About 27,000", "About 42,000"], "answer": 2, "points": 2000 }
+  {"q": "Warm-up: have you used Valkey before?", "options": ["Yes, in production", "Yes, for side projects", "Not yet", "What's Valkey?"], "answer": null, "points": 0},
+  {"q": "How many unique people have contributed code to Valkey across all its releases?", "options": ["About 280", "About 160", "About 450", "About 650"], "answer": 0, "points": 1000},
+  {"q": "How many people have participated in valkey-io/valkey on GitHub by opening, commenting on, or reviewing an issue or PR?", "options": ["About 350", "About 550", "About 1,600", "About 950"], "answer": 3, "points": 1500},
+  {"q": "How many GitHub stars does valkey-io/valkey have?", "options": ["About 12,000", "About 18,000", "About 27,000", "About 42,000"], "answer": 2, "points": 2000},
+  {"q": "Which is a real Valkey command?", "options": ["BRPOPRPUSH", "BRPOPLPUSH", "BLPOPRPUSH", "BLPOPLPUSH"], "answer": 1, "points": 1000},
+  {"q": "What's special about port 6379?", "options": ["Antirez's birthday", "Spells MERZ on a phone keypad", "First free port above 6000", "Random"], "answer": 1, "points": 1000},
+  {"q": "What does \"PF\" in PFADD stand for?", "options": ["Probabilistic Filter", "Pretty Fuzzy", "Philippe Flajolet", "Pierre Fermat"], "answer": 2, "points": 1000},
+  {"q": "What was Valkey called before it was Valkey?", "options": ["FreeRedis", "PlaceholderKV", "KeyDB2", "OpenKV"], "answer": 1, "points": 1000},
+  {"q": "Which version did Valkey fork from?", "options": ["7.0.2", "7.2.4", "7.2.5", "7.4.0"], "answer": 1, "points": 1000},
+  {"q": "Which is a real Valkey error?", "options": ["NOCONSENSUS", "BADPRIMARY", "NOTBUSY", "NOLEADER"], "answer": 2, "points": 1000},
+  {"q": "Which are valid LOLWUT versions?", "options": ["5, 6, 7, 9", "6, 7, 9", "5, 6, 7, 8, 9", "5, 6, 9"], "answer": 3, "points": 1000},
+  {"q": "How many characters long must a module data type name be?", "options": ["5", "7", "9", "10"], "answer": 2, "points": 1000}
 ]
