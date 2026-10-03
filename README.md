@@ -1,6 +1,6 @@
 # Valkey Race
 
-A live multiple-choice race. Players scan a Valkey-branded QR code on the host screen, pick a name, and play rounds from their phone. Lock in within 5 seconds for 5000 points. After 5 seconds everyone's guesses become visible and points fall linearly to 0 at 15 seconds. Wrong answers score 0. The host clicks **Next round** to start each round.
+A live multiple-choice race. Players scan a Valkey-branded QR code on the host screen, pick a name, and play from their phone. Each question runs 30 seconds: read for 10, answer blind for the next 10 for the question's full points, then everyone's guesses show and points fall linearly to 0 at 30 seconds. Wrong answers score 0. The host clicks **Next question** to start each one. The first question is a zero-point warm-up.
 
 All state lives in Valkey. Every command Valkey executes, captured with `MONITOR`, is appended to the `valkey:commands` stream and shown live on the host screen and at `/commands`.
 
@@ -8,9 +8,9 @@ All state lives in Valkey. Every command Valkey executes, captured with `MONITOR
 
 | Path | Who |
 |---|---|
-| `/play` | Players (the QR target). The `pid` cookie keeps a player's identity and score across rounds and reloads. |
-| `/host` | Big screen: QR code, question, guesses, leaderboard, command stream. Prompts for the host key once. |
-| `/commands` | Command stream only. |
+| `/play` | Players (the QR target). The `pid` cookie keeps a player's identity and score across rounds and reloads. **Leave** removes the player. |
+| `/host` | Big screen. Asks for the admin code before showing the QR code. Next question, Questions (lists questions and answers from Valkey), Reset game (clears players, scores and rounds), Log out. |
+| `/commands` | Command stream and commands/s gauge only. |
 
 ## Architecture
 
@@ -30,7 +30,8 @@ Round timing uses Valkey `TIME` as the single clock. Each task schedules its own
 | `game:events` | stream | round / guess / join events fanned out to every task |
 | `round:<n>:answers` | hash | pid → choice. `HSETNX` makes lock-in final |
 | `round:<n>:points` | hash | pid → points |
-| `questions` | list | question bank, seeded from `app/questions.json` on first start |
+| `{questions}` | list | question bank (`q`, `options`, `answer` or null, `points`), loaded from `app/questions.json` whenever its hash changes |
+| `{questions}:version` | string | that hash |
 | `valkey:commands` | stream | every command executed, capped at ~5000 |
 | `monitor:leader` | string | 10s lease. Only the holder runs `MONITOR`, so entries aren't duplicated per task |
 
@@ -57,4 +58,4 @@ npx cdk deploy --profile <your-profile>
 
 Outputs are `HostUrl` and `HostKeyCommand`, which prints the host key. Tear down with `npx cdk destroy`.
 
-There is no reset endpoint. Scores and the question bank persist until the Valkey data is flushed. Questions are seeded once, so edits to `questions.json` take effect only after `questions` and `questions:seeded` are deleted.
+Edit `app/questions.json` and redeploy to change the questions. The research questions' numbers were measured on 2026-10-03.
