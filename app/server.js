@@ -4,9 +4,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { client, primaryOf, monitor as startMonitor, COMMAND_STREAM } from './valkey.js';
 
-const ROUND_MS = 15000;
-const FULL_MS = 5000;
-const MAX_POINTS = 5000;
+// A round: read 0-10s, answer blind 10-20s, answer with guesses shown 20-30s.
+const READ_MS = 10000;
+const REVEAL_MS = 20000;
+const ROUND_MS = 30000;
 const PORT = Number(process.env.PORT || 8080);
 const HOST_KEY = process.env.HOST_KEY || 'dev';
 
@@ -17,8 +18,8 @@ const K = {
   round: 'game:round',         // hash n, start, qi of the current round
   active: 'game:active',       // lock held while a round runs
   events: 'game:events',       // stream fanned out to every server
-  questions: 'questions',      // list of JSON questions
-  seeded: 'questions:seeded',
+  questions: '{questions}',    // list of JSON questions
+  questionsVersion: '{questions}:version', // hash of the questions.json they came from
   answers: (n) => `round:${n}:answers`, // hash pid -> choice
   points: (n) => `round:${n}:points`,   // hash pid -> points
   monitorLeader: 'monitor:leader',      // lease: which task runs MONITOR
@@ -36,9 +37,10 @@ function fields(arr) {
   return o;
 }
 
-function points(elapsed) {
-  if (elapsed <= FULL_MS) return MAX_POINTS;
-  return Math.max(0, Math.round((MAX_POINTS * (ROUND_MS - elapsed)) / (ROUND_MS - FULL_MS)));
+// Full points until guesses are revealed, then linear down to 0 at the end.
+function points(elapsed, max) {
+  if (elapsed <= REVEAL_MS) return max;
+  return Math.max(0, Math.round((max * (ROUND_MS - elapsed)) / (ROUND_MS - REVEAL_MS)));
 }
 
 async function now() {
@@ -46,11 +48,14 @@ async function now() {
   return Number(s) * 1000 + Math.floor(Number(us) / 1000);
 }
 
+// Load questions.json into Valkey whenever its contents change.
 async function seed() {
-  if (await db.set(K.seeded, '1', 'NX')) {
-    const qs = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, 'questions.json'), 'utf8'));
-    await db.rpush(K.questions, ...qs.map((q) => JSON.stringify(q)));
-  }
+  const raw = fs.readFileSync(path.join(import.meta.dirname, 'questions.json'), 'utf8');
+  const version = crypto.createHash('sha1').update(raw).digest('hex');
+  if ((await db.get(K.questionsVersion)) === version) return;
+  const qs = JSON.parse(raw).map((q) => JSON.stringify(q));
+  // Same hash tag, so one slot and one atomic transaction.
+  await db.multi().del(K.questions).rpush(K.questions, ...qs).set(K.questionsVersion, version).exec();
 }
 
 async function getRound() {
@@ -97,12 +102,15 @@ setInterval(() => { for (const c of clients) c.res.write(': ping\n\n'); }, 15000
 
 let scheduledRound = 0;
 let revealedRound = 0;
+let epoch = 0; // bumped on game reset so timers from before it do nothing
 
 function schedule(r) {
   if (r.n <= scheduledRound) return;
   scheduledRound = r.n;
-  setTimeout(() => reveal(r.n).catch(console.error), r.start + FULL_MS - Date.now());
-  setTimeout(() => endRound(r).catch(console.error), r.start + ROUND_MS + 250 - Date.now());
+  const e = epoch;
+  const at = (ms, fn) => setTimeout(() => { if (e === epoch) fn().catch(console.error); }, r.start + ms - Date.now());
+  at(REVEAL_MS, () => reveal(r.n));
+  at(ROUND_MS + 250, () => endRound(r));
 }
 
 async function reveal(n) {
@@ -112,12 +120,13 @@ async function reveal(n) {
 }
 
 async function endRound(r) {
-  const [q, pts, board] = await Promise.all([question(r.qi), db.hgetall(K.points(r.n)), leaderboard()]);
+  const [q, pts, board, total] = await Promise.all([
+    question(r.qi), db.hgetall(K.points(r.n)), leaderboard(), db.llen(K.questions)]);
   const byPid = Object.fromEntries(board.map((e) => [e.pid, e]));
   const top = board.slice(0, 10);
   for (const c of clients) {
     send(c, 'end', {
-      n: r.n, correct: q.answer, top,
+      n: r.n, correct: q.answer, top, final: r.n === total,
       me: c.pid ? { points: Number(pts[c.pid] ?? 0), answered: c.pid in pts, ...byPid[c.pid] } : null,
     });
   }
@@ -132,8 +141,12 @@ async function onEvent(e) {
     if (revealedRound >= Number(e.n)) {
       broadcast('guess', { n: Number(e.n), pid: e.pid, name: e.name, choice: Number(e.choice) });
     }
-  } else if (e.type === 'join') {
+  } else if (e.type === 'players') {
     broadcast('players', { count: Number(e.count) });
+  } else if (e.type === 'reset') {
+    epoch++;
+    scheduledRound = revealedRound = 0;
+    broadcast('reset', {});
   }
 }
 
@@ -160,7 +173,7 @@ async function tailEvents() {
 
 const SRC = crypto.randomUUID(); // lease owner id for this process
 const LEASE_MS = 10000;
-const RENEW = "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end return 0";
+const RENEW = "if server.call('GET', KEYS[1]) == ARGV[1] then return server.call('PEXPIRE', KEYS[1], ARGV[2]) end return 0";
 let monitor = null; // { conn, addr } of the MONITOR connection
 
 function fmt(args) {
@@ -221,16 +234,17 @@ async function tailCommands() {
 // ---- HTTP ----
 
 async function state(pid) {
-  const [r, count, board] = await Promise.all([getRound(), db.hlen(K.players), leaderboard()]);
+  const [r, count, board, total] = await Promise.all([getRound(), db.hlen(K.players), leaderboard(), db.llen(K.questions)]);
   const me = pid ? board.find((e) => e.pid === pid) ?? null : null;
-  const out = { serverNow: Date.now(), players: count, top: board.slice(0, 10), me, round: null };
+  const out = { serverNow: Date.now(), players: count, top: board.slice(0, 10), me, total, round: null };
   if (r) {
     const q = await question(r.qi);
     const elapsed = Date.now() - r.start;
-    out.round = { n: r.n, start: r.start, q: q.q, options: q.options };
+    out.round = { n: r.n, start: r.start, q: q.q, options: q.options, points: q.points };
     if (pid) out.round.myChoice = (await db.hget(K.answers(r.n), pid)) ?? null;
-    if (elapsed >= FULL_MS) out.round.guesses = await guesses(r.n);
+    if (elapsed >= REVEAL_MS) out.round.guesses = await guesses(r.n);
     if (elapsed >= ROUND_MS) {
+      out.round.ended = true;
       out.round.correct = q.answer;
       if (pid && me) {
         const p = await db.hget(K.points(r.n), pid);
@@ -248,8 +262,18 @@ async function join(pid, body) {
   await db.hset(K.players, pid, name);
   await db.zadd(K.board, 'NX', 0, pid);
   const count = await db.hlen(K.players);
-  await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'join', 'count', count);
-  return [200, { pid, name }, pid];
+  await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'players', 'count', count);
+  return [200, { pid, name }, `pid=${pid}; Path=/; Max-Age=2592000; SameSite=Lax; HttpOnly`];
+}
+
+async function leave(pid) {
+  if (pid) {
+    await db.hdel(K.players, pid);
+    await db.zrem(K.board, pid);
+    const count = await db.hlen(K.players);
+    await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'players', 'count', count);
+  }
+  return [200, { ok: true }, 'pid=; Path=/; Max-Age=0'];
 }
 
 async function answer(pid, body) {
@@ -261,10 +285,11 @@ async function answer(pid, body) {
   const r = await getRound();
   if (!r || r.n !== n) return [409, { error: 'not the current round' }];
   const elapsed = (await now()) - r.start;
+  if (elapsed < READ_MS) return [409, { error: 'answers open at 10s' }];
   if (elapsed >= ROUND_MS) return [409, { error: 'round over' }];
   if (!(await db.hsetnx(K.answers(n), pid, choice))) return [409, { error: 'already locked in' }];
   const q = await question(r.qi);
-  const pts = choice === q.answer ? points(elapsed) : 0;
+  const pts = choice === q.answer ? points(elapsed, q.points) : 0;
   await Promise.all([
     db.hset(K.points(n), pid, pts),
     db.zincrby(K.board, pts, pid),
@@ -273,17 +298,37 @@ async function answer(pid, body) {
   return [200, { ok: true, elapsed }];
 }
 
-async function next(key) {
-  if (key !== HOST_KEY) return [403, { error: 'bad host key' }];
+const DENIED = [403, { error: 'bad host key' }];
+
+async function next() {
   if (!(await db.set(K.active, '1', 'PX', ROUND_MS + 1000, 'NX'))) return [409, { error: 'round in progress' }];
+  const total = await db.llen(K.questions);
+  if (Number((await db.get(K.roundN)) ?? 0) >= total) {
+    await db.del(K.active);
+    return [409, { error: 'no more questions. Reset to play again' }];
+  }
   const n = await db.incr(K.roundN);
-  const qi = (n - 1) % (await db.llen(K.questions));
+  const qi = n - 1;
   const q = await question(qi);
   const start = await now();
   await db.hset(K.round, { n, start, qi });
   await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'round', 'n', n, 'start', start, 'qi', qi,
-    'question', JSON.stringify({ q: q.q, options: q.options }));
+    'question', JSON.stringify({ q: q.q, options: q.options, points: q.points, total }));
   return [200, { n }];
+}
+
+async function reset() {
+  const n = Number((await db.get(K.roundN)) ?? 0);
+  const keys = [K.players, K.board, K.roundN, K.round, K.active];
+  for (let i = 1; i <= n; i++) keys.push(K.answers(i), K.points(i));
+  // One DEL per key: in cluster mode a multi-key DEL must stay within one slot.
+  await Promise.all(keys.map((k) => db.del(k)));
+  await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'reset');
+  return [200, { ok: true }];
+}
+
+async function questions() {
+  return [200, (await db.lrange(K.questions, 0, -1)).map((q) => JSON.parse(q))];
 }
 
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
@@ -305,9 +350,9 @@ async function readJson(req) {
   return s ? JSON.parse(s) : {};
 }
 
-function json(res, status, body, pid) {
+function json(res, status, body, cookie) {
   const headers = { 'Content-Type': 'application/json' };
-  if (pid) headers['Set-Cookie'] = `pid=${pid}; Path=/; Max-Age=2592000; SameSite=Lax; HttpOnly`;
+  if (cookie) headers['Set-Cookie'] = cookie;
   res.writeHead(status, headers).end(JSON.stringify(body));
 }
 
@@ -337,7 +382,15 @@ async function handle(req, res) {
   if (route === 'GET /api/state') return json(res, 200, await state(pid));
   if (route === 'POST /api/join') return json(res, ...(await join(pid, await readJson(req))));
   if (route === 'POST /api/answer') return json(res, ...(await answer(pid, await readJson(req))));
-  if (route === 'POST /api/next') return json(res, ...(await next(req.headers['x-host-key'])));
+  if (route === 'POST /api/leave') return json(res, ...(await leave(pid)));
+
+  if (url.pathname.startsWith('/api/host/')) {
+    if (req.headers['x-host-key'] !== HOST_KEY) return json(res, ...DENIED);
+    if (route === 'POST /api/host/login') return json(res, 200, { ok: true });
+    if (route === 'GET /api/host/questions') return json(res, ...(await questions()));
+    if (route === 'POST /api/host/next') return json(res, ...(await next()));
+    if (route === 'POST /api/host/reset') return json(res, ...(await reset()));
+  }
 
   res.writeHead(404).end('not found');
 }

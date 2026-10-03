@@ -8,15 +8,19 @@
 <style>
   body { padding: 1em; height: 100vh; overflow: hidden; }
   .cmds { font-size: 14px; }
+  .layout { display: grid; grid-template-columns: 420px 1fr; gap: 1em; align-items: start; }
 </style>
 </head>
 <body>
-<h2>Valkey commands <span class="muted" id="cmd-rate"></span></h2>
-<div class="cmds" id="cmds"></div>
+<div class="layout">
+  <div class="card gauge-card" id="gauge"></div>
+  <div class="cmds" id="cmds"></div>
+</div>
 <script src="/game.js"></script>
+<script src="/gauge.js"></script>
 <script src="/commands.js"></script>
 <script>
-watchCommands(new EventSource('/events?commands'), $('cmds'), $('cmd-rate'));
+watchCommands(new EventSource('/events?commands'), $('cmds'), $('gauge'));
 </script>
 </body>
 </html>

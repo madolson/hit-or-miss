@@ -9,16 +9,30 @@
   body { height: 100vh; overflow: hidden; }
   .layout { display: grid; grid-template-columns: 340px 1fr 420px; gap: 1em; padding: 1em; height: 100%; }
   .col { display: flex; flex-direction: column; gap: 1em; min-height: 0; }
+  .center { overflow: auto; }
   #qr { width: 100%; border-radius: 10px; }
   #join-url { word-break: break-all; font-size: .9em; }
   #q { font-size: 2.2em; }
   .opt { font-size: 1.4em; min-height: 4.5em; }
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: .5em; }
+  .controls #next { grid-column: 1 / -1; }
   .cmds-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   #cmds { flex: 1; }
+  #login { max-width: 420px; margin: 20vh auto; display: flex; flex-direction: column; gap: .7em; }
+  .qlist { margin: 0; padding-left: 1.4em; }
+  .qlist li { margin-bottom: .8em; }
+  .qlist .right { color: #2fd18b; font-weight: 700; }
 </style>
 </head>
 <body>
-<div class="layout">
+<form id="login" class="card hidden">
+  <h2>Valkey Race · Host</h2>
+  <input id="key" type="password" placeholder="Admin code" autofocus>
+  <button>Start hosting</button>
+  <p id="login-status" class="muted"></p>
+</form>
+
+<div id="app" class="layout hidden">
   <div class="col">
     <div class="card">
       <canvas id="qr"></canvas>
@@ -26,32 +40,42 @@
       <p><strong id="players">0</strong> players</p>
     </div>
     <div class="card">
-      <form id="key-form" class="hidden">
-        <input id="key" type="password" placeholder="Host key">
-      </form>
-      <button id="next" style="width:100%">Next round</button>
+      <div class="controls">
+        <button id="next">Next question</button>
+        <button id="show-questions" class="ghost">Questions</button>
+        <button id="reset" class="ghost">Reset game</button>
+        <button id="logout" class="ghost">Log out</button>
+      </div>
       <p id="host-status" class="muted"></p>
     </div>
   </div>
 
-  <div class="col">
-    <div id="idle" class="card"><h1>Valkey Race</h1><p class="muted">Lock in within 5 seconds for 5000 points. After that, everyone's guesses show and points drop to zero at 15 seconds.</p></div>
+  <div class="col center">
+    <div id="questions" class="card hidden">
+      <h3>Questions</h3>
+      <ol class="qlist" id="qlist"></ol>
+    </div>
+    <div id="idle" class="card">
+      <h1>Valkey Race</h1>
+      <p class="muted">Each question runs 30 seconds. Read for 10. Answer blind for the next 10 for full points. In the last 10, everyone's guesses show and points drop to zero.</p>
+    </div>
     <div id="round" class="hidden">
-      <p class="muted">Round <span id="round-n"></span></p>
+      <p class="muted">Question <span id="round-n"></span> of <span id="round-total"></span> · <span id="worth"></span></p>
       <h1 id="q"></h1>
       <div class="timer" id="timer"><span></span><span></span></div>
       <div class="bar"><div id="bar"></div></div>
       <div class="options" id="options"></div>
     </div>
     <div class="card">
-      <h3>Leaderboard</h3>
+      <h3 id="board-title">Leaderboard</h3>
       <ul class="board" id="board"></ul>
     </div>
   </div>
 
   <div class="col">
+    <div class="card gauge-card" id="gauge"></div>
     <div class="card cmds-card">
-      <h3>Valkey commands <span class="muted" id="cmd-rate"></span></h3>
+      <h3>Valkey commands</h3>
       <div class="cmds" id="cmds"></div>
     </div>
   </div>
@@ -59,51 +83,110 @@
 <script src="/qrcode.js"></script>
 <script src="/qr.js"></script>
 <script src="/game.js"></script>
+<script src="/gauge.js"></script>
 <script src="/commands.js"></script>
 <script>
-const joinUrl = `${location.origin}/play`;
-drawQR($('qr'), joinUrl, 600);
-$('join-url').textContent = joinUrl;
+let total = 0;
+
+const hostApi = (path, method = 'POST') =>
+  fetch(path, { method, headers: { 'x-host-key': localStorage.hostKey ?? '' } });
 
 function render() {
   show('idle', !round);
   show('round', !!round);
   if (!round) return;
   $('round-n').textContent = round.n;
+  $('round-total').textContent = total;
+  $('worth').textContent = round.points ? `${round.points} pts` : 'warm-up, no points';
   $('q').textContent = round.q;
   renderOptions($('options'), round, null);
 }
 
-$('key').value = localStorage.hostKey || '';
-show('key-form', !localStorage.hostKey);
-$('next').onclick = async () => {
-  localStorage.hostKey = $('key').value;
-  const res = await fetch('/api/next', { method: 'POST', headers: { 'x-host-key': localStorage.hostKey } });
-  const body = await res.json();
-  $('host-status').textContent = res.ok ? '' : body.error;
-  if (res.status === 403) { delete localStorage.hostKey; show('key-form', true); }
-  else show('key-form', false);
-};
+function renderQuestions(qs) {
+  const ol = $('qlist');
+  ol.textContent = '';
+  for (const q of qs) {
+    const li = el('li');
+    li.append(el('strong', null, q.q), el('span', 'muted', ` · ${q.points ? `${q.points} pts` : 'warm-up'}`));
+    const opts = el('div');
+    q.options.forEach((o, i) => {
+      opts.append(el('span', i === q.answer ? 'right' : 'muted', `${'ABCD'[i]}. ${o}`), '  ');
+    });
+    li.append(opts);
+    ol.append(li);
+  }
+}
 
 async function load() {
   const s = await (await fetch('/api/state')).json();
   syncClock(s.serverNow);
+  total = s.total;
   $('players').textContent = s.players;
   renderBoard($('board'), s.top);
   round = s.round ? newRound(s.round) : null;
   render();
 }
 
-const es = new EventSource('/events?commands');
-es.onopen = load;
-es.addEventListener('players', (e) => { $('players').textContent = JSON.parse(e.data).count; });
-followRounds(es, render, (d) => renderBoard($('board'), d.top));
-watchCommands(es, $('cmds'), $('cmd-rate'));
+function start() {
+  show('login', false);
+  show('app', true);
+  const joinUrl = `${location.origin}/play`;
+  drawQR($('qr'), joinUrl, 600);
+  $('join-url').textContent = joinUrl;
 
-(function tick() {
-  if (round) renderTimer($('timer'), $('bar'), round);
-  requestAnimationFrame(tick);
-})();
+  const es = new EventSource('/events?commands');
+  es.onopen = load;
+  es.addEventListener('players', (e) => { $('players').textContent = JSON.parse(e.data).count; });
+  es.addEventListener('round', (e) => { total = JSON.parse(e.data).total; });
+  followRounds(es, render, (d) => {
+    renderBoard($('board'), d.top);
+    $('board-title').textContent = d.final ? 'Final leaderboard' : 'Leaderboard';
+  }, () => {
+    $('board-title').textContent = 'Leaderboard';
+    load();
+  });
+  watchCommands(es, $('cmds'), $('gauge'));
+
+  (function tick() {
+    if (round) renderTimer($('timer'), $('bar'), round);
+    requestAnimationFrame(tick);
+  })();
+}
+
+async function login(key) {
+  localStorage.hostKey = key;
+  const res = await hostApi('/api/host/login');
+  if (res.ok) return start();
+  delete localStorage.hostKey;
+  show('login', true);
+  $('login-status').textContent = key ? 'Wrong admin code.' : '';
+}
+
+$('login').onsubmit = (e) => { e.preventDefault(); login($('key').value); };
+
+$('next').onclick = async () => {
+  const res = await hostApi('/api/host/next');
+  $('host-status').textContent = res.ok ? '' : (await res.json()).error;
+};
+
+$('show-questions').onclick = async () => {
+  const open = $('questions').classList.contains('hidden');
+  if (open) renderQuestions(await (await hostApi('/api/host/questions', 'GET')).json());
+  show('questions', open);
+};
+
+$('reset').onclick = async () => {
+  if (!confirm('Reset the game? This removes every player and score.')) return;
+  const res = await hostApi('/api/host/reset');
+  $('host-status').textContent = res.ok ? 'Game reset.' : (await res.json()).error;
+};
+
+$('logout').onclick = () => {
+  delete localStorage.hostKey;
+  location.reload();
+};
+
+login(localStorage.hostKey ?? '');
 </script>
 </body>
 </html>

@@ -3,6 +3,7 @@ body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background:
 h1, h2, h3 { margin: 0 0 .5em; }
 button { font: inherit; border: 0; border-radius: 10px; padding: .8em 1.2em; cursor: pointer; background: #6983ff; color: #fff; font-weight: 600; }
 button:disabled { opacity: .5; cursor: default; }
+button.ghost { background: transparent; border: 1px solid #3a4470; color: #9aa4d1; padding: .4em .8em; font-weight: 400; }
 input { font: inherit; padding: .8em; border-radius: 10px; border: 1px solid #3a4470; background: #18214a; color: inherit; width: 100%; }
 .hidden { display: none !important; }
 .muted { color: #9aa4d1; }
@@ -32,3 +33,9 @@ input { font: inherit; padding: .8em; border-radius: 10px; border: 1px solid #3a
 .cmds div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cmds .c { color: #ffcf5c; font-weight: 700; }
 .cmds .s { color: #6b76a8; }
+
+.gauge-card { background: linear-gradient(160deg, #060A24 0%, #171043 48%, #301868 100%); }
+.gauge { width: 100%; display: block; }
+.gauge-logo { filter: brightness(0) invert(1); }
+.gauge-value { fill: #fff; font-size: 64px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.gauge-unit { fill: #CCF1FF; opacity: .7; font-size: 24px; }

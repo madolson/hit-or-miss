@@ -43,52 +43,71 @@ class Player {
 const base = (i) => bases[i % bases.length];
 const [alice, bob, carol, dan] = ['alice', 'bob', 'carol', 'dan'].map((n, i) => new Player(n, base(i)));
 const host = new Player('host', base(1));
+const hostReq = (path, key = hostKey) => host.req(path, {}, { 'x-host-key': key });
+const questions = (await import('../app/questions.json', { with: { type: 'json' } })).default;
+
+assert.equal((await hostReq('/api/host/login', 'wrong'))[0], 403);
+assert.equal((await hostReq('/api/host/reset'))[0], 200);
+const [, qs] = await host.req('/api/host/questions', null, { 'x-host-key': hostKey });
+assert.deepEqual(qs, questions, 'questions in Valkey match questions.json');
 
 for (const p of [alice, bob, carol, dan]) assert.equal((await p.req('/api/join', { name: p.name }))[0], 200);
 for (const p of [alice, bob, carol, dan]) await p.listen();
 await host.listen('?commands');
 await sleep(300);
 
-assert.equal((await host.req('/api/next', {}, { 'x-host-key': 'wrong' }))[0], 403);
-const [code, nx] = await host.req('/api/next', {}, { 'x-host-key': hostKey });
-assert.equal(code, 200);
-const n = nx.n;
-assert.equal((await host.req('/api/next', {}, { 'x-host-key': hostKey }))[0], 409, 'next during a round');
-await sleep(200);
+async function startRound() {
+  const [code, nx] = await hostReq('/api/host/next');
+  assert.equal(code, 200, JSON.stringify(nx));
+  assert.equal((await hostReq('/api/host/next'))[0], 409, 'next during a round');
+  await sleep(300);
+  const ev = alice.events.find(([, t, d]) => t === 'round' && d.n === nx.n);
+  assert.ok(ev, 'alice got round start');
+  return { n: nx.n, start: ev[2].start };
+}
+const at = (r, ms) => sleep(r.start + ms - Date.now());
 
-const roundEv = alice.events.find(([, t, d]) => t === 'round' && d.n === n);
-assert.ok(roundEv, 'alice got round start');
-const start = roundEv[2].start;
-const [, st] = await alice.req('/api/state');
-const q = (await import('../app/questions.json', { with: { type: 'json' } })).default
-  .find((x) => x.q === st.round.q);
+// Round 1: the zero-point warm-up.
+let r = await startRound();
+assert.equal(r.n, 1);
+assert.equal((await alice.req('/api/answer', { n: r.n, choice: 0 }))[0], 409, 'answer while reading');
+await at(r, 10300);
+assert.equal((await alice.req('/api/answer', { n: r.n, choice: 0 }))[0], 200);
+await at(r, 31500);
+const warm = alice.events.find(([, t, d]) => t === 'end' && d.n === r.n)[2];
+assert.equal(warm.correct, null);
+assert.equal(warm.me.points, 0);
+log('warm-up ok');
+
+// Round 2: scored.
+r = await startRound();
+const q = questions[r.n - 1];
 const right = q.answer;
 const wrong = (right + 1) % 4;
-log(`round ${n}: ${q.q} -> ${q.options[right]}`);
-
-const [ca, ra] = await alice.req('/api/answer', { n, choice: right });
-assert.equal(ca, 200);
-assert.equal((await alice.req('/api/answer', { n, choice: right }))[0], 409, 'double lock-in');
-assert.equal((await bob.req('/api/answer', { n, choice: wrong }))[0], 200);
-await sleep(start + 10000 - Date.now());
-const [, rc] = await carol.req('/api/answer', { n, choice: right });
+log(`round ${r.n}: ${q.q} -> ${q.options[right]} (${q.points} pts)`);
+await at(r, 10200);
+const [, ra] = await alice.req('/api/answer', { n: r.n, choice: right });
+assert.equal((await alice.req('/api/answer', { n: r.n, choice: right }))[0], 409, 'double lock-in');
+assert.equal((await bob.req('/api/answer', { n: r.n, choice: wrong }))[0], 200);
+await at(r, 25000);
+const [, rc] = await carol.req('/api/answer', { n: r.n, choice: right });
 log(`alice locked at ${ra.elapsed}ms, carol at ${rc.elapsed}ms`);
-await sleep(start + 15500 - Date.now());
-assert.equal((await dan.req('/api/answer', { n, choice: right }))[0], 409, 'answer after 15s');
+await at(r, 31000);
+assert.equal((await dan.req('/api/answer', { n: r.n, choice: right }))[0], 409, 'answer after 30s');
 
-// Guesses must not reach anyone before the 5s reveal.
+// Guesses must not reach anyone before the 20s reveal.
 for (const p of [alice, bob, carol, dan]) {
-  const early = p.events.filter(([ts, t]) => (t === 'guess' || t === 'reveal') && ts < start + 5000 - 50);
-  assert.equal(early.length, 0, `${p.name} saw guesses before 5s`);
-  const rev = p.events.find(([, t, d]) => t === 'reveal' && d.n === n);
+  const early = p.events.filter(([ts, t, d]) => (t === 'guess' || t === 'reveal') && d.n === r.n && ts < r.start + 20000 - 50);
+  assert.equal(early.length, 0, `${p.name} saw guesses before 20s`);
+  const rev = p.events.find(([, t, d]) => t === 'reveal' && d.n === r.n);
   assert.deepEqual(rev[2].guesses.map((g) => g.name).sort(), ['alice', 'bob']);
-  assert.ok(p.events.some(([, t, d]) => t === 'guess' && d.name === 'carol'), `${p.name} saw carol live`);
+  assert.ok(p.events.some(([, t, d]) => t === 'guess' && d.n === r.n && d.name === 'carol'), `${p.name} saw carol live`);
 }
 
-const expectCarol = Math.round((5000 * (15000 - rc.elapsed)) / 10000);
-const ends = Object.fromEntries([alice, bob, carol, dan].map((p) => [p.name, p.events.find(([, t, d]) => t === 'end' && d.n === n)[2]]));
+const expectCarol = Math.round((q.points * (30000 - rc.elapsed)) / 10000);
+const ends = Object.fromEntries([alice, bob, carol, dan].map((p) => [p.name, p.events.find(([, t, d]) => t === 'end' && d.n === r.n)[2]]));
 assert.equal(ends.alice.correct, right);
-assert.equal(ends.alice.me.points, 5000);
+assert.equal(ends.alice.me.points, q.points);
 assert.equal(ends.bob.me.points, 0);
 assert.equal(ends.carol.me.points, expectCarol);
 assert.equal(ends.dan.me.answered, false);
@@ -100,9 +119,28 @@ assert.equal(again.me.name, 'carol');
 
 const cmds = host.events.filter(([, t]) => t === 'cmds').flatMap(([, , d]) => d);
 const names = new Set(cmds.map((c) => c.cmd));
-for (const c of ['HSETNX', 'ZINCRBY', 'TIME', 'XREAD', 'SET', 'INCR']) assert.ok(names.has(c), `command stream has ${c}`);
+for (const c of ['HSETNX', 'ZINCRBY', 'TIME', 'XREAD', 'SET', 'INCR', 'EVAL']) assert.ok(names.has(c), `command stream has ${c}`);
+assert.ok(cmds.some((c) => c.cmd === 'EVAL' && c.args.includes('server.call')), 'lease script uses server.call');
 assert.ok(!cmds.some((c) => c.args.includes('valkey:commands')), 'command stream logs itself');
 // alice twice, bob, carol. More means two servers are both running MONITOR.
-assert.equal(cmds.filter((c) => c.cmd === 'HSETNX' && c.args.startsWith(`round:${n}:answers`)).length, 4);
+assert.equal(cmds.filter((c) => c.cmd === 'HSETNX' && c.args.startsWith(`round:${r.n}:answers`)).length, 4);
+
+// Leaving removes the player and clears the cookie.
+await dan.req('/api/leave', {});
+const [, afterLeave] = await alice.req('/api/state');
+assert.equal(afterLeave.players, 3);
+const [, danState] = await dan.req('/api/state');
+assert.equal(danState.me, null);
+
+// Reset clears everyone and starts over at the warm-up.
+assert.equal((await hostReq('/api/host/reset'))[0], 200);
+await sleep(300);
+assert.ok(alice.events.some(([, t]) => t === 'reset'), 'alice told about reset');
+const [, fresh] = await alice.req('/api/state');
+assert.equal(fresh.players, 0);
+assert.equal(fresh.round, null);
+assert.equal(fresh.me, null);
+assert.equal((await startRound()).n, 1, 'first question after reset is the warm-up');
+await hostReq('/api/host/reset');
 log(`ok: ${cmds.length} commands streamed, kinds: ${[...names].sort().join(' ')}`);
 process.exit(0);

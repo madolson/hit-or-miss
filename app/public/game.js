@@ -1,15 +1,16 @@
 // Shared by the phone and host pages.
-const ROUND_MS = 15000;
-const FULL_MS = 5000;
-const MAX_POINTS = 5000;
+// A round: read 0-10s, answer blind 10-20s, answer with guesses shown 20-30s.
+const READ_MS = 10000;
+const REVEAL_MS = 20000;
+const ROUND_MS = 30000;
 
 let clockOffset = 0;
 const serverNow = () => Date.now() + clockOffset;
 const syncClock = (ts) => { clockOffset = ts - Date.now(); };
 
-function pointsAt(elapsed) {
-  if (elapsed <= FULL_MS) return MAX_POINTS;
-  return Math.max(0, Math.round((MAX_POINTS * (ROUND_MS - elapsed)) / (ROUND_MS - FULL_MS)));
+function pointsAt(elapsed, max) {
+  if (elapsed <= REVEAL_MS) return max;
+  return Math.max(0, Math.round((max * (ROUND_MS - elapsed)) / (ROUND_MS - REVEAL_MS)));
 }
 
 function el(tag, cls, text) {
@@ -24,9 +25,10 @@ const show = (id, on) => $(id).classList.toggle('hidden', !on);
 
 function newRound(r) {
   const round = {
-    n: r.n, start: r.start, q: r.q, options: r.options, guesses: {},
+    n: r.n, start: r.start, q: r.q, options: r.options, points: r.points, guesses: {},
     myChoice: r.myChoice == null ? null : Number(r.myChoice),
     correct: r.correct ?? null,
+    ended: !!r.ended,
   };
   for (const g of r.guesses ?? []) round.guesses[g.pid] = g;
   return round;
@@ -35,41 +37,49 @@ function newRound(r) {
 let round = null;
 
 // Keeps `round` in sync with the server's round events.
-function followRounds(es, render, onEnd) {
+function followRounds(es, render, onEnd, onReset) {
   const on = (type, fn) => es.addEventListener(type, (e) => {
     const d = JSON.parse(e.data);
-    if (type === 'round' || round?.n === d.n) { fn(d); render(); }
+    if (type === 'round' || type === 'reset' || round?.n === d.n) { fn(d); render(); }
   });
   on('round', (d) => { syncClock(d.serverNow); round = newRound(d); });
   on('reveal', (d) => { for (const g of d.guesses) round.guesses[g.pid] = g; });
   on('guess', (d) => { round.guesses[d.pid] = d; });
-  on('end', (d) => { round.correct = d.correct; onEnd(d); });
+  on('end', (d) => { round.correct = d.correct; round.ended = true; onEnd(d); });
+  on('reset', () => { round = null; onReset(); });
 }
 
-const timeUp = (round) => serverNow() - round.start >= ROUND_MS;
+// 0 reading, 1 blind answers, 2 guesses visible, 3 over.
+function phase(round) {
+  const t = serverNow() - round.start;
+  return t < READ_MS ? 0 : t < REVEAL_MS ? 1 : t < ROUND_MS ? 2 : 3;
+}
 
 function renderOptions(box, round, onPick) {
   box.textContent = '';
+  const p = phase(round);
   round.options.forEach((text, i) => {
     const b = el('button', 'opt', text);
     const who = Object.values(round.guesses).filter((g) => g.choice === i).map((g) => g.name);
     if (who.length) b.append(el('span', 'who', `${who.length}: ${who.join(', ')}`));
     if (round.myChoice === i) b.classList.add('chosen');
-    if (round.correct !== null) b.classList.add(i === round.correct ? 'right' : 'wrong');
-    b.disabled = !onPick || round.myChoice !== null || round.correct !== null || timeUp(round);
+    if (round.ended && round.correct !== null) b.classList.add(i === round.correct ? 'right' : 'wrong');
+    b.disabled = !onPick || round.myChoice !== null || round.ended || p === 0 || p === 3;
     if (onPick) b.onclick = () => onPick(i);
     box.append(b);
   });
 }
 
-// Updates a .timer/.bar pair. Returns true while the round is still open.
+// Updates a .timer/.bar pair for the current phase. Returns the phase.
 function renderTimer(label, bar, round) {
-  const elapsed = Math.max(0, serverNow() - round.start);
-  const left = Math.max(0, ROUND_MS - elapsed);
-  bar.style.width = `${(left / ROUND_MS) * 100}%`;
-  label.children[0].textContent = left ? `${(left / 1000).toFixed(1)}s` : "Time's up";
-  label.children[1].textContent = left ? `${pointsAt(elapsed)} pts` : '';
-  return left > 0;
+  const t = Math.max(0, serverNow() - round.start);
+  const p = phase(round);
+  const until = [READ_MS, REVEAL_MS, ROUND_MS, ROUND_MS][p];
+  const secs = `${(Math.max(0, until - t) / 1000).toFixed(1)}s`;
+  bar.style.width = `${(Math.max(0, ROUND_MS - t) / ROUND_MS) * 100}%`;
+  label.children[0].textContent = ['Read the question', 'Answer now', 'Guesses are in', "Time's up"][p] + (p < 3 ? ` · ${secs}` : '');
+  label.children[1].textContent = p === 3 ? '' : `${pointsAt(t, round.points)} pts`;
+  return p;
 }
 
 function renderBoard(ul, top, myPid) {

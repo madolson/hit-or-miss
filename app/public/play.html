@@ -19,6 +19,7 @@
     <img src="/valkey-logo.svg" alt="">
     <strong id="me-name">Valkey Race</strong>
     <span class="score" id="me-score"></span>
+    <button id="leave" class="ghost hidden">Leave</button>
   </header>
 
   <section id="join" class="card hidden">
@@ -35,7 +36,7 @@
   </section>
 
   <section id="round" class="hidden">
-    <p class="muted">Round <span id="round-n"></span></p>
+    <p class="muted">Question <span id="round-n"></span> · <span id="worth"></span></p>
     <h2 id="q"></h2>
     <div class="timer" id="timer"><span></span><span></span></div>
     <div class="bar"><div id="bar"></div></div>
@@ -46,6 +47,7 @@
 <script src="/game.js"></script>
 <script>
 let me = null;
+let es = null;
 
 async function api(path, body) {
   const res = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
@@ -55,6 +57,20 @@ async function api(path, body) {
 function renderMe() {
   $('me-name').textContent = me ? me.name : 'Valkey Race';
   $('me-score').textContent = me && me.score != null ? `${me.score} pts${me.rank ? ` · #${me.rank}` : ''}` : '';
+  show('leave', !!me);
+}
+
+function statusText() {
+  if (round.ended) {
+    const final = round.final ? ` Game over. You finished #${me.rank}.` : '';
+    if (round.correct === null) return 'Warm-up done. The real questions are next.' + final;
+    if (!round.result?.answered) return 'You did not answer.' + final;
+    return (round.result.points ? `Correct! +${round.result.points}` : 'Wrong answer. 0 points.') + final;
+  }
+  if (round.myChoice !== null) {
+    return round.lockedAt != null ? `Locked in at ${(round.lockedAt / 1000).toFixed(1)}s.` : 'Locked in.';
+  }
+  return phase(round) === 0 ? 'Answers open at 10 seconds.' : '';
 }
 
 function render() {
@@ -64,17 +80,10 @@ function render() {
   renderMe();
   if (!me || !round) return;
   $('round-n').textContent = round.n;
+  $('worth').textContent = round.points ? `${round.points} pts` : 'warm-up, no points';
   $('q').textContent = round.q;
   renderOptions($('options'), round, pick);
-  let status = '';
-  if (round.correct !== null) {
-    status = round.result?.answered
-      ? (round.result.points ? `Correct! +${round.result.points}` : 'Wrong answer. 0 points.')
-      : 'You did not answer.';
-  } else if (round.myChoice !== null) {
-    status = round.lockedAt != null ? `Locked in at ${(round.lockedAt / 1000).toFixed(1)}s.` : 'Locked in.';
-  }
-  $('status').textContent = status;
+  $('status').textContent = statusText();
 }
 
 async function pick(choice) {
@@ -94,13 +103,21 @@ async function load() {
   render();
 }
 
+function disconnect() {
+  es?.close();
+  es = null;
+  me = round = null;
+  render();
+}
+
 function connect() {
-  const es = new EventSource('/events');
+  es = new EventSource('/events');
   es.onopen = load; // resync after any reconnect
   followRounds(es, render, (d) => {
     round.result = d.me;
+    round.final = d.final;
     if (d.me) Object.assign(me, { score: d.me.score, rank: d.me.rank });
-  });
+  }, disconnect); // the host reset the game, which removes every player
 }
 
 $('join-form').onsubmit = async (e) => {
@@ -110,12 +127,18 @@ $('join-form').onsubmit = async (e) => {
   connect();
 };
 
-let wasOpen = false;
+$('leave').onclick = async () => {
+  if (!confirm('Leave the game? Your score will be removed.')) return;
+  await api('/api/leave', {});
+  disconnect();
+};
+
+let lastPhase = -1;
 (function tick() {
   if (round && me) {
-    const open = renderTimer($('timer'), $('bar'), round);
-    if (wasOpen && !open) render(); // lock the buttons when time runs out
-    wasOpen = open;
+    const p = renderTimer($('timer'), $('bar'), round);
+    if (p !== lastPhase) render(); // enable or lock the buttons as phases change
+    lastPhase = p;
   }
   requestAnimationFrame(tick);
 })();
