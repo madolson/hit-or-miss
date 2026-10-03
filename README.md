@@ -2,7 +2,7 @@
 
 A live multiple-choice race. Players scan a Valkey-branded QR code on the host screen, pick a name, and play rounds from their phone. Lock in within 5 seconds for 5000 points. After 5 seconds everyone's guesses become visible and points fall linearly to 0 at 15 seconds. Wrong answers score 0. The host clicks **Next round** to start each round.
 
-All state lives in Valkey. Every command the app sends to Valkey is also appended to the `valkey:commands` stream and shown live on the host screen and at `/commands`.
+All state lives in Valkey. Every command Valkey executes, captured with `MONITOR`, is appended to the `valkey:commands` stream and shown live on the host screen and at `/commands`.
 
 ## Pages
 
@@ -31,9 +31,10 @@ Round timing uses Valkey `TIME` as the single clock. Each task schedules its own
 | `round:<n>:answers` | hash | pid → choice. `HSETNX` makes lock-in final |
 | `round:<n>:points` | hash | pid → points |
 | `questions` | list | question bank, seeded from `app/questions.json` on first start |
-| `valkey:commands` | stream | every command issued, capped at ~5000 |
+| `valkey:commands` | stream | every command executed, capped at ~5000 |
+| `monitor:leader` | string | 10s lease. Only the holder runs `MONITOR`, so entries aren't duplicated per task |
 
-Writes to and reads of `valkey:commands` go over unlogged connections. Otherwise each log entry would produce another one.
+Commands that touch `valkey:commands` are left out of the stream. Otherwise each entry would produce another one.
 
 ## Run locally
 

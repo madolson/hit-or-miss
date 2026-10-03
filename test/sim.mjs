@@ -101,6 +101,8 @@ assert.equal(again.me.name, 'carol');
 const cmds = host.events.filter(([, t]) => t === 'cmds').flatMap(([, , d]) => d);
 const names = new Set(cmds.map((c) => c.cmd));
 for (const c of ['HSETNX', 'ZINCRBY', 'TIME', 'XREAD', 'SET', 'INCR']) assert.ok(names.has(c), `command stream has ${c}`);
-assert.ok(!cmds.some((c) => c.args.startsWith('valkey:commands')), 'command stream logs itself');
+assert.ok(!cmds.some((c) => c.args.includes('valkey:commands')), 'command stream logs itself');
+// alice twice, bob, carol. More means two servers are both running MONITOR.
+assert.equal(cmds.filter((c) => c.cmd === 'HSETNX' && c.args.startsWith(`round:${n}:answers`)).length, 4);
 log(`ok: ${cmds.length} commands streamed, kinds: ${[...names].sort().join(' ')}`);
 process.exit(0);

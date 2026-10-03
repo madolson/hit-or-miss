@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { loggedClient, rawClient, logger, COMMAND_STREAM } from './valkey.js';
+import { client, monitor as startMonitor, COMMAND_STREAM } from './valkey.js';
 
 const ROUND_MS = 15000;
 const FULL_MS = 5000;
@@ -21,11 +21,13 @@ const K = {
   seeded: 'questions:seeded',
   answers: (n) => `round:${n}:answers`, // hash pid -> choice
   points: (n) => `round:${n}:points`,   // hash pid -> points
+  monitorLeader: 'monitor:leader',      // lease: which task runs MONITOR
 };
 
-const db = loggedClient();
-const eventsReader = loggedClient(); // dedicated connection for blocking XREAD
-const commandsReader = rawClient();
+const db = client();
+const eventsReader = client();   // dedicated connections for blocking XREAD
+const commandsReader = client();
+const logger = client();         // writes MONITOR output to the command stream
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function fields(arr) {
@@ -151,6 +153,43 @@ async function tailEvents() {
       console.error('events:', err.message);
       await sleep(1000);
     }
+  }
+}
+
+// ---- Command stream. One task at a time holds the lease and runs MONITOR. ----
+
+const SRC = crypto.randomUUID(); // lease owner id for this process
+const LEASE_MS = 10000;
+const RENEW = "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end return 0";
+let monitor = null;
+
+function fmt(args) {
+  const s = args.join(' ');
+  return s.length > 200 ? s.slice(0, 200) + '…' : s;
+}
+
+async function leadMonitor() {
+  for (;;) {
+    try {
+      const lead = (await db.set(K.monitorLeader, SRC, 'PX', LEASE_MS, 'NX'))
+        || (await db.eval(RENEW, 1, K.monitorLeader, SRC, LEASE_MS));
+      if (lead && !monitor) {
+        monitor = await startMonitor();
+        monitor.on('monitor', (time, args, source) => {
+          // Skip traffic on the stream itself, or every entry would log another.
+          if (args.includes(COMMAND_STREAM)) return;
+          logger.xadd(COMMAND_STREAM, 'MAXLEN', '~', 5000, '*',
+            'src', source, 'cmd', args[0].toUpperCase(), 'args', fmt(args.slice(1))).catch(() => {});
+        });
+        monitor.on('end', () => { monitor = null; });
+      } else if (!lead && monitor) {
+        monitor.disconnect();
+        monitor = null;
+      }
+    } catch (err) {
+      console.error('monitor:', err.message);
+    }
+    await sleep(LEASE_MS / 3);
   }
 }
 
@@ -301,6 +340,7 @@ const current = await getRound();
 if (current) schedule(current);
 tailEvents();
 tailCommands();
+leadMonitor();
 http.createServer((req, res) => handle(req, res).catch((err) => {
   console.error(err);
   if (!res.headersSent) json(res, 500, { error: 'internal error' });
