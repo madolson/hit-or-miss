@@ -10,19 +10,26 @@ const ROUND_MS = 30000;
 const PORT = Number(process.env.PORT || 8080);
 const HOST_KEY = process.env.HOST_KEY || 'dev';
 
+// Every game key shares the {game} hash tag, so they live in one cluster slot and
+// a reset or a leave can change several of them in one atomic command.
 const K = {
-  players: 'players',          // hash pid -> name
-  board: 'leaderboard',        // zset pid -> total points
-  roundN: 'game:round:n',      // counter
-  round: 'game:round',         // hash n, start, qi of the current round
-  active: 'game:active',       // lock held while a round runs
-  events: 'game:events',       // stream fanned out to every server
-  questions: '{questions}',    // list of JSON questions
+  players: '{game}:players',     // hash pid -> name
+  board: '{game}:leaderboard',   // zset pid -> total points, recomputed when a question ends
+  round: '{game}:round',         // hash n, start, qi of the current question
+  active: '{game}:active',       // lock held while a question runs
+  events: '{game}:events',       // stream fanned out to every server
+  answers: (n) => `{game}:round:${n}:answers`, // hash pid -> "choice:elapsedMs"
+  points: (n) => `{game}:round:${n}:points`,   // hash pid -> points, written when the question ends
+  questions: '{questions}',      // list of JSON questions
   questionsVersion: '{questions}:version', // hash of the questions.json they came from
-  answers: (n) => `round:${n}:answers`, // hash pid -> choice
-  points: (n) => `round:${n}:points`,   // hash pid -> points
-  monitorLeader: 'monitor:leader',      // lease: which task runs MONITOR
+  monitorLeader: 'monitor:leader',         // lease: which task runs MONITOR
 };
+
+// Lock in an answer and announce it in one atomic step. HSETNX makes it first-write-wins,
+// so a resent or repeated request changes nothing.
+const LOCK_IN = `if server.call('HSETNX', KEYS[1], ARGV[1], ARGV[2]) == 0 then return 0 end
+server.call('XADD', KEYS[2], 'MAXLEN', '~', '1000', '*', 'type', 'guess', 'n', ARGV[3], 'pid', ARGV[1], 'name', ARGV[4], 'choice', ARGV[5])
+return 1`;
 
 const db = client();
 const eventsReader = client();   // dedicated connections for blocking XREAD
@@ -73,7 +80,7 @@ async function names(pids) {
 async function guesses(n) {
   const answers = await db.hgetall(K.answers(n));
   const nm = await names(Object.keys(answers));
-  return Object.entries(answers).map(([pid, c]) => ({ pid, name: nm[pid], choice: Number(c) }));
+  return Object.entries(answers).map(([pid, v]) => ({ pid, name: nm[pid], choice: Number(v.split(':')[0]) }));
 }
 
 async function leaderboard() {
@@ -118,9 +125,27 @@ async function reveal(n) {
   broadcast('reveal', { n, guesses: await guesses(n) });
 }
 
+// Derive this question's points from the answers, then every total from all questions'
+// points. Both are absolute writes, so every server can run this and the result is the same.
+async function score(r) {
+  const [q, answers] = await Promise.all([question(r.qi), db.hgetall(K.answers(r.n))]);
+  const pts = {};
+  for (const [pid, v] of Object.entries(answers)) {
+    const [choice, elapsed] = v.split(':').map(Number);
+    pts[pid] = choice === q.answer ? points(elapsed, q.points) : 0;
+  }
+  if (Object.keys(pts).length) await db.hset(K.points(r.n), pts);
+  const [players, ...rounds] = await Promise.all([
+    db.hkeys(K.players), ...Array.from({ length: r.n }, (_, i) => db.hgetall(K.points(i + 1)))]);
+  if (players.length) {
+    await db.zadd(K.board, ...players.flatMap((pid) => [rounds.reduce((t, h) => t + Number(h[pid] ?? 0), 0), pid]));
+  }
+  return { q, pts };
+}
+
 async function endRound(r) {
-  const [q, pts, board, total] = await Promise.all([
-    question(r.qi), db.hgetall(K.points(r.n)), leaderboard(), db.llen(K.questions)]);
+  const { q, pts } = await score(r);
+  const [board, total] = await Promise.all([leaderboard(), db.llen(K.questions)]);
   const byPid = Object.fromEntries(board.map((e) => [e.pid, e]));
   const top = board.slice(0, 10);
   for (const c of clients) {
@@ -240,7 +265,7 @@ async function state(pid) {
     const q = await question(r.qi);
     const elapsed = Date.now() - r.start;
     out.round = { n: r.n, start: r.start, q: q.q, options: q.options, points: q.points };
-    if (pid) out.round.myChoice = (await db.hget(K.answers(r.n), pid)) ?? null;
+    if (pid) out.round.myChoice = (await db.hget(K.answers(r.n), pid))?.split(':')[0] ?? null;
     if (elapsed >= REVEAL_MS) out.round.guesses = await guesses(r.n);
     if (elapsed >= ROUND_MS) {
       out.round.ended = true;
@@ -258,18 +283,15 @@ async function join(pid, body) {
   const name = String(body.name ?? '').trim().slice(0, 20);
   if (!name) return [400, { error: 'name required' }];
   pid ||= crypto.randomUUID();
-  await db.hset(K.players, pid, name);
-  await db.zadd(K.board, 'NX', 0, pid);
-  const count = await db.hlen(K.players);
+  // HSET and ZADD NX are absolute, so joining twice is the same as joining once.
+  const [, , [, count]] = await db.multi().hset(K.players, pid, name).zadd(K.board, 'NX', 0, pid).hlen(K.players).exec();
   await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'players', 'count', count);
   return [200, { pid, name }, `pid=${pid}; Path=/; Max-Age=2592000; SameSite=Lax; HttpOnly`];
 }
 
 async function leave(pid) {
   if (pid) {
-    await db.hdel(K.players, pid);
-    await db.zrem(K.board, pid);
-    const count = await db.hlen(K.players);
+    const [, , [, count]] = await db.multi().hdel(K.players, pid).zrem(K.board, pid).hlen(K.players).exec();
     await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'players', 'count', count);
   }
   return [200, { ok: true }, 'pid=; Path=/; Max-Age=0'];
@@ -285,14 +307,10 @@ async function answer(pid, body) {
   if (!r || r.n !== n) return [409, { error: 'not the current round' }];
   const elapsed = (await now()) - r.start;
   if (elapsed >= ROUND_MS) return [409, { error: 'round over' }];
-  if (!(await db.hsetnx(K.answers(n), pid, choice))) return [409, { error: 'already locked in' }];
-  const q = await question(r.qi);
-  const pts = choice === q.answer ? points(elapsed, q.points) : 0;
-  await Promise.all([
-    db.hset(K.points(n), pid, pts),
-    db.zincrby(K.board, pts, pid),
-    db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'guess', 'n', n, 'pid', pid, 'name', name, 'choice', choice),
-  ]);
+  // Points are worked out when the question ends, so nothing on the command stream
+  // gives away who was right before the reveal.
+  const locked = await db.eval(LOCK_IN, 2, K.answers(n), K.events, pid, `${choice}:${elapsed}`, n, name, choice);
+  if (!locked) return [409, { error: 'already locked in' }];
   return [200, { ok: true, elapsed }];
 }
 
@@ -301,11 +319,13 @@ const DENIED = [403, { error: 'bad host key' }];
 async function next() {
   if (!(await db.set(K.active, '1', 'PX', ROUND_MS + 1000, 'NX'))) return [409, { error: 'round in progress' }];
   const total = await db.llen(K.questions);
-  if (Number((await db.get(K.roundN)) ?? 0) >= total) {
+  // Only the lock holder gets here, so the next number can be set absolutely instead of
+  // with INCR, which a client resend could apply twice.
+  const n = Number((await db.hget(K.round, 'n')) ?? 0) + 1;
+  if (n > total) {
     await db.del(K.active);
     return [409, { error: 'no more questions. Reset to play again' }];
   }
-  const n = await db.incr(K.roundN);
   const qi = n - 1;
   const q = await question(qi);
   const start = await now();
@@ -316,12 +336,11 @@ async function next() {
 }
 
 async function reset() {
-  const n = Number((await db.get(K.roundN)) ?? 0);
-  const keys = [K.players, K.board, K.roundN, K.round, K.active];
+  const n = Number((await db.hget(K.round, 'n')) ?? 0);
+  const keys = [K.players, K.board, K.round, K.active];
   for (let i = 1; i <= n; i++) keys.push(K.answers(i), K.points(i));
-  // One DEL per key: in cluster mode a multi-key DEL must stay within one slot.
-  await Promise.all(keys.map((k) => db.del(k)));
-  await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'reset');
+  // All {game} keys share a slot, so one DEL removes every player and score atomically.
+  await db.multi().del(...keys).xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'reset').exec();
   return [200, { ok: true }];
 }
 

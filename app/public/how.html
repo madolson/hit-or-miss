@@ -10,7 +10,9 @@
   .topbar { display: flex; align-items: center; gap: .8em; margin-bottom: 1em; }
   .topbar img { height: 2em; }
   .topbar h1 { margin: 0; }
-  .cases { display: grid; grid-template-columns: repeat(auto-fill, minmax(560px, 1fr)); gap: 1em; margin-top: 1.5em; }
+  .cases { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(560px, 100%), 1fr)); gap: 1em; margin-top: 1.5em; }
+  .topbar a { color: #9aa4d1; }
+  @media (max-width: 600px) { main { padding: .8em; } .topbar h1 { font-size: 1.3em; } .case td:first-child { width: 55%; } }
   .case h2 { margin-bottom: .2em; }
   .case .who { color: #9aa4d1; margin: 0 0 .6em; }
   .case table { width: 100%; border-collapse: collapse; font-size: .92em; }
@@ -21,64 +23,57 @@
 </head>
 <body>
 <main>
-  <header class="topbar"><img src="/valkey-logo.svg" alt=""><h1>Hit or Miss · How it works</h1></header>
+  <header class="topbar"><img src="/valkey-logo.svg" alt=""><h1>Hit or Miss · How it works</h1><span style="flex:1"></span><a href="https://github.com/madolson/hit-or-miss">Code on GitHub</a></header>
   <p class="muted">Every piece of game state lives in ElastiCache for Valkey. Each card is one use case and the commands that implement it, the same commands that scroll by on the host screen.</p>
   <div class="cases" id="cases"></div>
 </main>
 <script>
 const P = 'Player', H = 'Host', S = 'App servers';
 const CASES = [
-  { id: 'join', name: 'Join the game', actors: [P], how: 'POST /api/join. A cookie holds a random player id, so the same phone stays the same player across rounds and reloads.', cmds: [
-    ['HSET players <pid> <name>', 'Store the display name under the player id.'],
-    ['ZADD leaderboard NX 0 <pid>', 'Put the player on the board at 0. NX never resets an existing score.'],
-    ['HLEN players', 'Player count for the host screen.'],
-    ['XADD game:events MAXLEN ~ 1000 * type players count <n>', 'Tell every server, each of which pushes the new count to its screens.'],
+  { id: 'join', name: 'Join the game', actors: [P], how: 'POST /api/join. A cookie holds a random player id, so the same phone stays the same player across rounds and reloads. Every write is absolute, so joining twice is the same as joining once.', cmds: [
+    ['MULTI', 'The writes below apply together. All game keys share the {game} hash tag, so they sit in one slot.'],
+    ['HSET {game}:players <pid> <name>', 'Store the display name under the player id.'],
+    ['ZADD {game}:leaderboard NX 0 <pid>', 'Put the player on the board at 0. NX never resets an existing score.'],
+    ['HLEN {game}:players · EXEC', 'Player count for the host screen.'],
+    ['XADD {game}:events MAXLEN ~ 1000 * type players count <n>', 'Tell every server, each of which pushes the new count to its screens.'],
   ] },
-  { id: 'answer', name: 'Lock in an answer', actors: [P], how: 'POST /api/answer. Only the first answer per player counts, and Valkey enforces it rather than the app.', cmds: [
-    ['HGET players <pid>', 'Check the player has joined.'],
-    ['HGETALL game:round', 'Current round number, start time and question index.'],
+  { id: 'answer', name: 'Lock in an answer', actors: [P], how: 'POST /api/answer. The first answer wins, enforced by Valkey. Points are not worked out here, so nothing on the command stream gives away who was right before the reveal.', cmds: [
+    ['HGET {game}:players <pid>', 'Check the player has joined.'],
+    ['HGETALL {game}:round', 'Current round number, start time and question index.'],
     ['TIME', 'Valkey\'s clock is the one clock every server shares, so elapsed time is the same whichever server takes the request.'],
-    ['HSETNX round:<n>:answers <pid> <choice>', 'Returns 0 if this player already answered. One answer per question, atomically.'],
-    ['LINDEX {questions} <qi>', 'The correct option and the question\'s point value.'],
-    ['HSET round:<n>:points <pid> <points>', 'Points for this question: full until 20s, then falling to 0 at 30s.'],
-    ['ZINCRBY leaderboard <points> <pid>', 'The sorted set keeps the ranking ordered.'],
-    ['XADD game:events MAXLEN ~ 1000 * type guess ...', 'Fanned out to every server, which holds it back from screens until the 20s reveal.'],
+    ['EVAL "if server.call(\'HSETNX\', ...) == 0 then return 0 end server.call(\'XADD\', ...)" 2 {game}:round:<n>:answers {game}:events ...', 'One atomic script. HSETNX stores choice and elapsed time only if this player has not answered, then XADD announces the guess. A resent request returns 0 and changes nothing.'],
   ] },
-  { id: 'leave', name: 'Leave the game', actors: [P], how: 'POST /api/leave clears the cookie and removes the player.', cmds: [
-    ['HDEL players <pid>', 'Forget the name.'],
-    ['ZREM leaderboard <pid>', 'Take the player off the board.'],
-    ['HLEN players', 'New player count.'],
-    ['XADD game:events MAXLEN ~ 1000 * type players count <n>', 'Update every screen.'],
+  { id: 'leave', name: 'Leave the game', actors: [P], how: 'POST /api/leave clears the cookie and removes the player in one transaction.', cmds: [
+    ['MULTI · HDEL {game}:players <pid> · ZREM {game}:leaderboard <pid> · HLEN {game}:players · EXEC', 'Name and score go together, never one without the other.'],
+    ['XADD {game}:events MAXLEN ~ 1000 * type players count <n>', 'Update every screen.'],
   ] },
   { id: 'view', name: 'Follow the live game', actors: [P, H], how: 'GET /api/state on page load and after every reconnect, then server-sent events from whichever server the load balancer picked.', cmds: [
-    ['HGETALL game:round', 'Which question is running and when it started.'],
+    ['HGETALL {game}:round', 'Which question is running and when it started.'],
     ['LINDEX {questions} <qi>', 'The question and its options.'],
     ['LLEN {questions}', 'How many questions there are.'],
-    ['HLEN players', 'Player count.'],
-    ['ZREVRANGE leaderboard 0 -1 WITHSCORES', 'The ranked board.'],
-    ['HMGET players <pid> ...', 'Names for the board and the guesses.'],
-    ['HGET round:<n>:answers <pid>', 'Your locked-in choice, so a reload keeps it.'],
-    ['HGETALL round:<n>:answers', 'Everyone\'s guesses, only after the 20s reveal.'],
-    ['HGET round:<n>:points <pid>', 'Your points, once the question is over.'],
+    ['HLEN {game}:players', 'Player count.'],
+    ['ZREVRANGE {game}:leaderboard 0 -1 WITHSCORES', 'The ranked board.'],
+    ['HMGET {game}:players <pid> ...', 'Names for the board and the guesses.'],
+    ['HGET {game}:round:<n>:answers <pid>', 'Your locked-in choice, so a reload keeps it.'],
+    ['HGETALL {game}:round:<n>:answers', 'Everyone\'s guesses, only after the 20s reveal.'],
+    ['HGET {game}:round:<n>:points <pid>', 'Your points, once the question is over.'],
   ] },
   { id: 'signin', name: 'Sign in as host', actors: [H], how: 'POST /api/host/login. The admin code is checked in the app against the key Fargate injects from Secrets Manager. No Valkey commands, and the QR code stays hidden until it passes.', cmds: [] },
-  { id: 'next', name: 'Start the next question', actors: [H], how: 'POST /api/host/next.', cmds: [
-    ['SET game:active 1 PX 31000 NX', 'A lock held for the length of a round, so a second click mid-round fails. It expires on its own.'],
+  { id: 'next', name: 'Start the next question', actors: [H], how: 'POST /api/host/next. Only the lock holder gets past the first command, so the round number is set absolutely rather than incremented.', cmds: [
+    ['SET {game}:active 1 PX 31000 NX', 'A lock held for the length of a question, so a second click, or a resent request, fails. It expires on its own.'],
     ['LLEN {questions}', 'Total questions.'],
-    ['GET game:round:n', 'Stop after the last question. If the game is over, DEL game:active releases the lock.'],
-    ['INCR game:round:n', 'The new question number.'],
+    ['HGET {game}:round n', 'The next number is this plus one. After the last question, DEL {game}:active releases the lock.'],
     ['LINDEX {questions} <qi>', 'The question to send out.'],
-    ['TIME', 'The round\'s start time, on the shared clock.'],
-    ['HSET game:round n <n> start <ms> qi <qi>', 'The current round, for answers and late joiners.'],
-    ['XADD game:events MAXLEN ~ 1000 * type round ...', 'Every server starts its 20s reveal and 30s end timers off this start time.'],
+    ['TIME', 'The question\'s start time, on the shared clock.'],
+    ['HSET {game}:round n <n> start <ms> qi <qi>', 'The current question, as absolute values.'],
+    ['XADD {game}:events MAXLEN ~ 1000 * type round ...', 'Every server starts its 20s reveal and 30s end timers off this start time. A duplicate is ignored by round number.'],
   ] },
   { id: 'questions', name: 'List questions and answers', actors: [H], how: 'GET /api/host/questions, admin code required.', cmds: [
     ['LRANGE {questions} 0 -1', 'The whole bank: question, options, answer and points, as JSON per entry.'],
   ] },
-  { id: 'reset', name: 'Reset the game', actors: [H], how: 'POST /api/host/reset.', cmds: [
-    ['GET game:round:n', 'How many rounds of keys to clean up.'],
-    ['DEL players / leaderboard / game:round:n / game:round / game:active / round:<i>:answers / round:<i>:points', 'One key per DEL: in cluster mode the keys hash to different slots.'],
-    ['XADD game:events MAXLEN ~ 1000 * type reset', 'Servers cancel pending timers and every phone goes back to the join screen.'],
+  { id: 'reset', name: 'Reset the game', actors: [H], how: 'POST /api/host/reset. Every player, answer and score is removed in one atomic step.', cmds: [
+    ['HGET {game}:round n', 'How many questions\' keys to clean up.'],
+    ['MULTI · DEL {game}:players {game}:leaderboard {game}:round {game}:active {game}:round:<i>:answers {game}:round:<i>:points ... · XADD {game}:events ... type reset · EXEC', 'One DEL for every key, possible because they share a slot. Servers then cancel pending timers and every phone goes back to the join screen.'],
   ] },
   { id: 'watch', name: 'Watch the command stream', actors: [H], how: 'The host screen and /commands subscribe with ?commands. The gauge counts arrivals per second.', cmds: [
     ['XREVRANGE valkey:commands + - COUNT 100', 'The last 100 commands, so the panel isn\'t empty on connect.'],
@@ -88,20 +83,20 @@ const CASES = [
     ['GET {questions}:version', 'The hash of the file the bank was loaded from.'],
     ['MULTI · DEL {questions} · RPUSH {questions} <json> ... · SET {questions}:version <sha1> · EXEC', 'The {questions} hash tag puts both keys in one slot, so the swap is one atomic transaction.'],
   ] },
-  { id: 'fanout', name: 'Fan out game events', actors: [S], how: 'Every server tails game:events, so any server can serve any phone and none of them needs sticky sessions.', cmds: [
-    ['XREVRANGE game:events + - COUNT 1', 'Start after the newest event.'],
-    ['XREAD BLOCK 0 STREAMS game:events <id>', 'Block on a dedicated connection until the next event, then push it to this server\'s screens.'],
+  { id: 'fanout', name: 'Fan out game events', actors: [S], how: 'Every server tails {game}:events, so any server can serve any phone and none of them needs sticky sessions.', cmds: [
+    ['XREVRANGE {game}:events + - COUNT 1', 'Start after the newest event.'],
+    ['XREAD BLOCK 0 STREAMS {game}:events <id>', 'Block on a dedicated connection until the next event, then push it to this server\'s screens.'],
   ] },
-  { id: 'reveal', name: 'Reveal guesses at 20s', actors: [S], how: 'A timer on every server, set from the round\'s start time.', cmds: [
-    ['HGETALL round:<n>:answers', 'Everything locked in so far.'],
-    ['HMGET players <pid> ...', 'Names to show beside the guesses.'],
+  { id: 'reveal', name: 'Reveal guesses at 20s', actors: [S], how: 'A timer on every server, set from the question\'s start time.', cmds: [
+    ['HGETALL {game}:round:<n>:answers', 'Everything locked in so far.'],
+    ['HMGET {game}:players <pid> ...', 'Names to show beside the guesses.'],
   ] },
-  { id: 'score', name: 'Score the question at 30s', actors: [S], how: 'A timer on every server. Each phone is sent its own points and rank.', cmds: [
-    ['LINDEX {questions} <qi>', 'The correct option to highlight.'],
-    ['HGETALL round:<n>:points', 'Who scored what this question.'],
-    ['ZREVRANGE leaderboard 0 -1 WITHSCORES', 'The full ranking, for the top 10 and each player\'s rank.'],
-    ['HMGET players <pid> ...', 'Names for the board.'],
-    ['LLEN {questions}', 'Whether this was the final question.'],
+  { id: 'score', name: 'Score the question at 30s', actors: [S], how: 'A timer on every server. Points and totals are derived from the answers and written as absolute values, so every server can run it, and run it again, with the same result.', cmds: [
+    ['LINDEX {questions} <qi> · HGETALL {game}:round:<n>:answers', 'The correct option, and each player\'s choice and elapsed time.'],
+    ['HSET {game}:round:<n>:points <pid> <points> ...', 'This question\'s points: full until 20s, then falling to 0 at 30s.'],
+    ['HKEYS {game}:players · HGETALL {game}:round:<i>:points ...', 'Every current player and every question\'s points.'],
+    ['ZADD {game}:leaderboard <total> <pid> ...', 'Each total set outright from the sum, never incremented.'],
+    ['ZREVRANGE {game}:leaderboard 0 -1 WITHSCORES · HMGET {game}:players ...', 'The top 10, and each player\'s own rank and points.'],
   ] },
   { id: 'monitor', name: 'Record every command', actors: [S], how: 'One server at a time holds a 10s lease and runs MONITOR on the shard primary. If it dies, another takes over within 10s.', cmds: [
     ['SET monitor:leader <id> PX 10000 NX', 'Take the lease if nobody holds it.'],

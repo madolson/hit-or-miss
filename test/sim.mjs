@@ -122,11 +122,15 @@ assert.equal(again.me.name, 'carol');
 
 const cmds = host.events.filter(([, t]) => t === 'cmds').flatMap(([, , d]) => d);
 const names = new Set(cmds.map((c) => c.cmd));
-for (const c of ['HSETNX', 'ZINCRBY', 'TIME', 'XREAD', 'SET', 'INCR', 'EVAL']) assert.ok(names.has(c), `command stream has ${c}`);
+for (const c of ['HSETNX', 'ZADD', 'TIME', 'XREAD', 'SET', 'EVAL', 'MULTI']) assert.ok(names.has(c), `command stream has ${c}`);
+for (const c of ['ZINCRBY', 'INCR']) assert.ok(!names.has(c), `non-idempotent ${c} is gone`);
+// Points are written only once the question ends, so the stream can't give away who was right.
+const early = cmds.filter((c) => c.cmd === 'HSET' && c.args.startsWith(`{game}:round:${r.n}:points`) && Number(c.id.split('-')[0]) < r.start + 30000);
+assert.equal(early.length, 0, 'points written before the question ended');
 assert.ok(cmds.some((c) => c.cmd === 'EVAL' && c.args.includes('server.call')), 'lease script uses server.call');
 assert.ok(!cmds.some((c) => c.args.includes('valkey:commands')), 'command stream logs itself');
 // alice twice, bob, carol. More means two servers are both running MONITOR.
-assert.equal(cmds.filter((c) => c.cmd === 'HSETNX' && c.args.startsWith(`round:${r.n}:answers`)).length, 4);
+assert.equal(cmds.filter((c) => c.cmd === 'HSETNX' && c.args.startsWith(`{game}:round:${r.n}:answers`)).length, 4);
 
 // Leaving removes the player and clears the cookie.
 await dan.req('/api/leave', {});

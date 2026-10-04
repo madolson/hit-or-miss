@@ -21,22 +21,23 @@ Round timing uses Valkey `TIME` as the single clock. Each task schedules its own
 
 ### Valkey keys
 
+Every game key carries the `{game}` hash tag, so they share one cluster slot. Joining, leaving and resetting are each one atomic transaction, and reset is a single `DEL`.
+
 | Key | Type | Purpose |
 |---|---|---|
-| `players` | hash | pid → name |
-| `leaderboard` | zset | pid → total points |
-| `game:round:n` | string | round counter |
-| `game:round` | hash | current round `n`, `start`, `qi` |
-| `game:active` | string | `SET NX PX` lock so a round can't be restarted mid-play |
-| `game:events` | stream | round / guess / join events fanned out to every task |
-| `round:<n>:answers` | hash | pid → choice. `HSETNX` makes lock-in final |
-| `round:<n>:points` | hash | pid → points |
+| `{game}:players` | hash | pid → name |
+| `{game}:leaderboard` | zset | pid → total points, set outright from the per-question points when each question ends |
+| `{game}:round` | hash | current question `n`, `start`, `qi` |
+| `{game}:active` | string | `SET NX PX` lock so a question can't be restarted mid-play |
+| `{game}:events` | stream | round / guess / players / reset events fanned out to every task |
+| `{game}:round:<n>:answers` | hash | pid → `choice:elapsedMs`. A Lua script does `HSETNX` and the guess `XADD` atomically, so lock-in is first-write-wins |
+| `{game}:round:<n>:points` | hash | pid → points, derived from the answers when the question ends |
 | `{questions}` | list | question bank (`q`, `options`, `answer` or null, `points`), loaded from `app/questions.json` whenever its hash changes |
 | `{questions}:version` | string | that hash |
 | `valkey:commands` | stream | every command executed, capped at ~5000 |
 | `monitor:leader` | string | 10s lease. Only the holder runs `MONITOR`, so entries aren't duplicated per task |
 
-Commands that touch `valkey:commands` are left out of the stream. Otherwise each entry would produce another one.
+Every write is either guarded (`NX`, `HSETNX`, a lock) or absolute (`HSET`, `ZADD`, `DEL`), so a client resend after a reconnect can't double-apply. There is no `INCR` or `ZINCRBY`. Points are never written mid-question, so the projected command stream doesn't show who answered correctly. Commands that touch `valkey:commands` are left out of the stream. Otherwise each entry would produce another one.
 
 ## Run locally in containers
 

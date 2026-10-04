@@ -36,7 +36,8 @@ function followRounds(es, render, onEnd, onReset) {
     const d = JSON.parse(e.data);
     if (type === 'round' || type === 'reset' || round?.n === d.n) { fn(d); render(); }
   });
-  on('round', (d) => { syncClock(d.serverNow); round = newRound(d); });
+  // A resent XADD can deliver the same round twice; keep the first so a locked-in choice survives.
+  on('round', (d) => { if (round?.n === d.n) return; syncClock(d.serverNow); round = newRound(d); });
   on('reveal', (d) => { for (const g of d.guesses) round.guesses[g.pid] = g; });
   on('guess', (d) => { round.guesses[d.pid] = d; });
   on('end', (d) => { round.correct = d.correct; round.ended = true; onEnd(d); });
