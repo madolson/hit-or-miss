@@ -37,15 +37,20 @@ function createGauge(container) {
 
   node('circle', { cx, cy, r: 370, fill: 'url(#g-violet)', opacity: 0.26 }, svg);
   node('path', { d: arc(R, 0, 1), fill: 'none', stroke: C.ice, 'stroke-width': WIDTH, opacity: 0.12 }, svg);
-  for (let i = 0; i <= 60; i++) {
-    const t = i / 60;
-    const major = i % 10 === 0;
+  // Ticks at 1x, 2x and 3x each power of 4, placed on the log scale, so every
+  // major gap splits into three and 1, 2, 3, 4, 8, 12, 16 ... each land on a line.
+  const at4 = (v) => Math.log(v) / Math.log(4) / DECADES;
+  const ticks = [];
+  for (let k = 0; k < DECADES; k++) for (const m of [1, 2, 3]) ticks.push(m * 4 ** k);
+  ticks.push(4 ** DECADES);
+  for (const v of ticks) {
+    const t = at4(v);
+    const major = Number.isInteger(Math.log(v) / Math.log(4));
     const [ax, ay] = pol(R - WIDTH / 2 - 8, t);
-    const [bx, by] = pol(R - WIDTH / 2 - (major ? 46 : 24), t);
+    const [bx, by] = pol(R - WIDTH / 2 - (major ? 46 : 26), t);
     node('line', { x1: ax, y1: ay, x2: bx, y2: by, stroke: t >= REDLINE ? C.coral : C.ice,
-      'stroke-width': major ? 3.4 : 1.8, opacity: major ? 0.6 : 0.28 }, svg);
-    if (major && i > 0) {
-      const v = 4 ** (i / 10);
+      'stroke-width': major ? 3.4 : 2, opacity: major ? 0.6 : 0.35 }, svg);
+    if (major && v > 1) {
       const [lx, ly] = pol(R - WIDTH / 2 - 72, t);
       node('text', { x: lx, y: ly, class: 'gauge-tick', 'text-anchor': 'middle', 'dominant-baseline': 'middle' }, svg)
         .textContent = v >= 1024 ? `${v / 1024}k` : v;
@@ -109,7 +114,7 @@ function createGauge(container) {
   draw();
 
   return function update(v) {
-    target = v <= 1 ? 0 : Math.min(1, Math.log(v) / Math.log(4) / DECADES);
+    target = v <= 1 ? 0 : Math.min(1, at4(v));
     value.textContent = Math.round(v);
   };
 }
