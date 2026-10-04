@@ -8,12 +8,20 @@
 <style>
   body { height: 100vh; overflow: hidden; }
   .layout { display: grid; grid-template-columns: 340px 1fr 420px; gap: 1em; padding: 1em; height: 100%; }
+  .layout.admin-hidden { grid-template-columns: 1fr 420px; }
+  .layout.admin-hidden #admin-col { display: none; }
+  #show-admin { position: fixed; left: .5em; bottom: .5em; z-index: 3; }
   .col { display: flex; flex-direction: column; gap: 1em; min-height: 0; }
-  .center { overflow: auto; }
+  /* The middle column must fit the screen: the round keeps its size, the leaderboard gives way. */
+  .center { position: relative; overflow: hidden; }
+  .center > #round { flex: none; }
+  .board-card { flex: 1; min-height: 0; overflow: hidden; }
+  #questions { position: absolute; inset: 0; z-index: 2; overflow: auto; box-shadow: 0 0 0 100vmax #0008; }
+  .admin-head { display: flex; justify-content: flex-end; margin-bottom: .5em; }
   #qr { width: 100%; border-radius: 10px; }
   #join-url { word-break: break-all; font-size: .9em; }
-  #q { font-size: 2.2em; }
-  .opt { font-size: 1.4em; min-height: 4.5em; }
+  #q { font-size: clamp(1.3em, 2.3vw, 2.2em); }
+  .opt { font-size: clamp(1em, 1.4vw, 1.4em); min-height: 3.6em; }
   .controls { display: grid; grid-template-columns: 1fr 1fr; gap: .5em; }
   .controls #next { grid-column: 1 / -1; }
   .cmds-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -33,8 +41,9 @@
 </form>
 
 <div id="app" class="layout hidden">
-  <div class="col">
+  <div class="col" id="admin-col">
     <div class="card">
+      <div class="admin-head"><button id="hide-admin" class="ghost">Hide ◀</button></div>
       <canvas id="qr"></canvas>
       <p>Scan to join<br><span id="join-url" class="muted"></span></p>
       <p><strong id="players">0</strong> players</p>
@@ -52,12 +61,13 @@
 
   <div class="col center">
     <div id="questions" class="card hidden">
+      <div class="admin-head"><button id="close-questions" class="ghost">Close</button></div>
       <h3>Questions</h3>
       <ol class="qlist" id="qlist"></ol>
     </div>
     <div id="idle" class="card">
       <h1>Valkey Race</h1>
-      <p class="muted">Each question runs 30 seconds. Read for 10. Answer blind for the next 10 for full points. In the last 10, everyone's guesses show and points drop to zero.</p>
+      <p class="rules">Each question runs 30 seconds. Lock in during the first 20 seconds for full points, while nobody can see anyone else's answer. In the last 10 seconds everyone's guesses appear and the points drop to zero. Wrong answers score nothing, and you get one answer per question.</p>
     </div>
     <div id="round" class="hidden">
       <p class="muted">Question <span id="round-n"></span> of <span id="round-total"></span> · <span id="worth"></span></p>
@@ -66,7 +76,7 @@
       <div class="bar"><div id="bar"></div></div>
       <div class="options" id="options"></div>
     </div>
-    <div class="card">
+    <div class="card board-card">
       <h3 id="board-title">Leaderboard</h3>
       <ul class="board" id="board"></ul>
     </div>
@@ -80,6 +90,7 @@
     </div>
   </div>
 </div>
+<button id="show-admin" class="ghost hidden">Admin ▶</button>
 <script src="/qrcode.js"></script>
 <script src="/qr.js"></script>
 <script src="/game.js"></script>
@@ -130,6 +141,7 @@ async function load() {
 function start() {
   show('login', false);
   show('app', true);
+  setAdminHidden(!!localStorage.adminHidden);
   const joinUrl = `${location.origin}/play`;
   drawQR($('qr'), joinUrl, 600);
   $('join-url').textContent = joinUrl;
@@ -180,6 +192,16 @@ $('reset').onclick = async () => {
   const res = await hostApi('/api/host/reset');
   $('host-status').textContent = res.ok ? 'Game reset.' : (await res.json()).error;
 };
+
+$('close-questions').onclick = () => show('questions', false);
+
+function setAdminHidden(hidden) {
+  localStorage.adminHidden = hidden ? '1' : '';
+  $('app').classList.toggle('admin-hidden', hidden);
+  show('show-admin', hidden && !$('app').classList.contains('hidden'));
+}
+$('hide-admin').onclick = () => setAdminHidden(true);
+$('show-admin').onclick = () => setAdminHidden(false);
 
 $('logout').onclick = () => {
   delete localStorage.hostKey;

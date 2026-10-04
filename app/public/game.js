@@ -1,6 +1,5 @@
 // Shared by the phone and host pages.
-// A round: read 0-10s, answer blind 10-20s, answer with guesses shown 20-30s.
-const READ_MS = 10000;
+// A round: answer blind 0-20s, answer with guesses shown 20-30s.
 const REVEAL_MS = 20000;
 const ROUND_MS = 30000;
 
@@ -49,10 +48,10 @@ function followRounds(es, render, onEnd, onReset) {
   on('reset', () => { round = null; onReset(); });
 }
 
-// 0 reading, 1 blind answers, 2 guesses visible, 3 over.
+// 0 blind answers, 1 guesses visible, 2 over.
 function phase(round) {
   const t = serverNow() - round.start;
-  return t < READ_MS ? 0 : t < REVEAL_MS ? 1 : t < ROUND_MS ? 2 : 3;
+  return t < REVEAL_MS ? 0 : t < ROUND_MS ? 1 : 2;
 }
 
 function renderOptions(box, round, onPick) {
@@ -64,7 +63,7 @@ function renderOptions(box, round, onPick) {
     if (who.length) b.append(el('span', 'who', `${who.length}: ${who.join(', ')}`));
     if (round.myChoice === i) b.classList.add('chosen');
     if (round.ended && round.correct !== null) b.classList.add(i === round.correct ? 'right' : 'wrong');
-    b.disabled = !onPick || round.myChoice !== null || round.ended || p === 0 || p === 3;
+    b.disabled = !onPick || round.myChoice !== null || round.ended || p === 2;
     if (onPick) b.onclick = () => onPick(i);
     box.append(b);
   });
@@ -74,11 +73,11 @@ function renderOptions(box, round, onPick) {
 function renderTimer(label, bar, round) {
   const t = Math.max(0, serverNow() - round.start);
   const p = phase(round);
-  const until = [READ_MS, REVEAL_MS, ROUND_MS, ROUND_MS][p];
+  const until = [REVEAL_MS, ROUND_MS, ROUND_MS][p];
   const secs = `${(Math.max(0, until - t) / 1000).toFixed(1)}s`;
   bar.style.width = `${(Math.max(0, ROUND_MS - t) / ROUND_MS) * 100}%`;
-  label.children[0].textContent = ['Read the question', 'Answer now', 'Guesses are in', "Time's up"][p] + (p < 3 ? ` · ${secs}` : '');
-  label.children[1].textContent = p === 3 ? '' : `${pointsAt(t, round.points)} pts`;
+  label.children[0].textContent = ['Answer now', 'Guesses are in', "Time's up"][p] + (p < 2 ? ` · ${secs}` : '');
+  label.children[1].textContent = p === 2 ? '' : `${pointsAt(t, round.points)} pts`;
   return p;
 }
 

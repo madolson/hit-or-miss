@@ -70,8 +70,6 @@ const at = (r, ms) => sleep(r.start + ms - Date.now());
 // Round 1: the zero-point warm-up.
 let r = await startRound();
 assert.equal(r.n, 1);
-assert.equal((await alice.req('/api/answer', { n: r.n, choice: 0 }))[0], 409, 'answer while reading');
-await at(r, 10300);
 assert.equal((await alice.req('/api/answer', { n: r.n, choice: 0 }))[0], 200);
 await at(r, 31500);
 const warm = alice.events.find(([, t, d]) => t === 'end' && d.n === r.n)[2];
@@ -85,7 +83,6 @@ const q = questions[r.n - 1];
 const right = q.answer;
 const wrong = (right + 1) % 4;
 log(`round ${r.n}: ${q.q} -> ${q.options[right]} (${q.points} pts)`);
-await at(r, 10200);
 const [, ra] = await alice.req('/api/answer', { n: r.n, choice: right });
 assert.equal((await alice.req('/api/answer', { n: r.n, choice: right }))[0], 409, 'double lock-in');
 assert.equal((await bob.req('/api/answer', { n: r.n, choice: wrong }))[0], 200);

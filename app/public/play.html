@@ -32,7 +32,8 @@
 
   <section id="wait" class="card hidden">
     <h2>You're in.</h2>
-    <p class="muted">Waiting for the host to start the next round.</p>
+    <p>Each question runs 30 seconds. Lock in during the first 20 seconds for full points, while nobody can see anyone else's answer. In the last 10 seconds everyone's guesses appear and the points drop to zero. Wrong answers score nothing, and you get one answer per question.</p>
+    <p class="muted">Waiting for the host to start.</p>
   </section>
 
   <section id="round" class="hidden">
@@ -70,7 +71,7 @@ function statusText() {
   if (round.myChoice !== null) {
     return round.lockedAt != null ? `Locked in at ${(round.lockedAt / 1000).toFixed(1)}s.` : 'Locked in.';
   }
-  return phase(round) === 0 ? 'Answers open at 10 seconds.' : '';
+  return '';
 }
 
 function render() {

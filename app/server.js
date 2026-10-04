@@ -4,8 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { client, primaryOf, monitor as startMonitor, COMMAND_STREAM } from './valkey.js';
 
-// A round: read 0-10s, answer blind 10-20s, answer with guesses shown 20-30s.
-const READ_MS = 10000;
+// A round: answer blind 0-20s, answer with guesses shown 20-30s.
 const REVEAL_MS = 20000;
 const ROUND_MS = 30000;
 const PORT = Number(process.env.PORT || 8080);
@@ -285,7 +284,6 @@ async function answer(pid, body) {
   const r = await getRound();
   if (!r || r.n !== n) return [409, { error: 'not the current round' }];
   const elapsed = (await now()) - r.start;
-  if (elapsed < READ_MS) return [409, { error: 'answers open at 10s' }];
   if (elapsed >= ROUND_MS) return [409, { error: 'round over' }];
   if (!(await db.hsetnx(K.answers(n), pid, choice))) return [409, { error: 'already locked in' }];
   const q = await question(r.qi);

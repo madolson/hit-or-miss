@@ -1,6 +1,6 @@
 # Valkey Race
 
-A live multiple-choice race. Players scan a Valkey-branded QR code on the host screen, pick a name, and play from their phone. Each question runs 30 seconds: read for 10, answer blind for the next 10 for the question's full points, then everyone's guesses show and points fall linearly to 0 at 30 seconds. Wrong answers score 0. The host clicks **Next question** to start each one. The first question is a zero-point warm-up.
+A live multiple-choice race. Players scan a Valkey-branded QR code on the host screen, pick a name, and play from their phone. Each question runs 30 seconds: answer blind in the first 20 for the question's full points, then everyone's guesses show and points fall linearly to 0 at 30 seconds. Wrong answers score 0. The host clicks **Next question** to start each one. The first question is a zero-point warm-up.
 
 All state lives in Valkey. Every command Valkey executes, captured with `MONITOR`, is appended to the `valkey:commands` stream and shown live on the host screen and at `/commands`.
 
@@ -9,7 +9,7 @@ All state lives in Valkey. Every command Valkey executes, captured with `MONITOR
 | Path | Who |
 |---|---|
 | `/play` | Players (the QR target). The `pid` cookie keeps a player's identity and score across rounds and reloads. **Leave** removes the player. |
-| `/host` | Big screen. Asks for the admin code before showing the QR code. Next question, Questions (lists questions and answers from Valkey), Reset game (clears players, scores and rounds), Log out. |
+| `/host` | Big screen. Asks for the admin code before showing the QR code (voxel hexagon mask). The admin column can be hidden. Next question, Questions (lists questions and answers from Valkey), Reset game (clears players, scores and rounds), Log out. |
 | `/commands` | Command stream and commands/s gauge only. |
 
 ## Architecture
