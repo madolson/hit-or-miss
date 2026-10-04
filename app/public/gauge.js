@@ -1,13 +1,13 @@
 // Commands-per-second gauge. Geometry and palette follow limitsGaugePinned in
-// madolson/valkey-svgs (the "Valkey pinned near its limit" banner). The scale is
-// logarithmic, and set so the last minute's peak lands where the banner's pointer sits.
+// madolson/valkey-svgs (the "Valkey pinned near its limit" banner). Fixed log scale,
+// base 4: one major notch per power of 4, from 1 at the start to 4096 at the stop.
 function createGauge(container) {
   const NS = 'http://www.w3.org/2000/svg';
   const C = { ice: '#CCF1FF', cyan: '#00A3E0', mint: '#2CD5C4', gold: '#FFB81C', coral: '#F65275', violet: '#963CBD', ink: '#060A24' };
   const cx = 420, cy = 420, R = 330, WIDTH = 32;
   const A0 = Math.PI * 0.75, SPAN = Math.PI * 1.5; // 270 degrees, gap at the bottom
-  const PEAK_AT = 0.945; // the banner's pointer position
-  const REDLINE = 0.86;
+  const DECADES = 6; // 4^6 = 4096 at full scale
+  const REDLINE = 5.5 / DECADES; // from 2048 up
   const at = (t) => A0 + t * SPAN;
   const pol = (rad, t) => [cx + rad * Math.cos(at(t)), cy + rad * Math.sin(at(t))];
   const arc = (rad, t0, t1) => {
@@ -44,6 +44,12 @@ function createGauge(container) {
     const [bx, by] = pol(R - WIDTH / 2 - (major ? 46 : 24), t);
     node('line', { x1: ax, y1: ay, x2: bx, y2: by, stroke: t >= REDLINE ? C.coral : C.ice,
       'stroke-width': major ? 3.4 : 1.8, opacity: major ? 0.6 : 0.28 }, svg);
+    if (major && i > 0) {
+      const v = 4 ** (i / 10);
+      const [lx, ly] = pol(R - WIDTH / 2 - 72, t);
+      node('text', { x: lx, y: ly, class: 'gauge-tick', 'text-anchor': 'middle', 'dominant-baseline': 'middle' }, svg)
+        .textContent = v >= 1024 ? `${v / 1024}k` : v;
+    }
   }
 
   // The fill up to the current value, drawn twice: blurred underneath for glow.
@@ -97,20 +103,13 @@ function createGauge(container) {
       l.setAttribute('x1', p0x); l.setAttribute('y1', p0y);
       l.setAttribute('x2', p1x); l.setAttribute('y2', p1y);
     }
-    sparks.setAttribute('opacity', Math.max(0, Math.min(1, (shown - 0.8) / (PEAK_AT - 0.8))));
+    sparks.setAttribute('opacity', Math.max(0, Math.min(1, (shown - (REDLINE - 0.08)) / 0.08)));
     requestAnimationFrame(draw);
   }
   draw();
 
-  const peaks = []; // [time, value]
   return function update(v) {
-    const now = Date.now();
-    peaks.push([now, v]);
-    while (peaks[0][0] < now - 60000) peaks.shift();
-    // log1p(peak) / log1p(max) = PEAK_AT, solved for max.
-    const peak = Math.max(50, ...peaks.map((p) => p[1]));
-    const max = Math.expm1(Math.log1p(peak) / PEAK_AT);
-    target = Math.min(1, Math.log1p(v) / Math.log1p(max));
+    target = v <= 1 ? 0 : Math.min(1, Math.log(v) / Math.log(4) / DECADES);
     value.textContent = Math.round(v);
   };
 }

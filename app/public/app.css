@@ -44,6 +44,7 @@ input { font: inherit; padding: .8em; border-radius: 10px; border: 1px solid #3a
 .gauge { width: 100%; display: block; }
 .gauge-logo { filter: brightness(0) invert(1); }
 .gauge-value { fill: #fff; font-size: 64px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.gauge-tick { fill: #CCF1FF; opacity: .55; font-size: 20px; font-variant-numeric: tabular-nums; }
 .gauge-unit { fill: #CCF1FF; opacity: .7; font-size: 24px; }
 .card > p:first-child { margin-top: 0; }
 .card > p:last-child { margin-bottom: 0; }
