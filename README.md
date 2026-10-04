@@ -11,7 +11,7 @@ All state lives in Valkey. Every command Valkey executes, captured with `MONITOR
 | `/play` | Players (the QR target). The `pid` cookie keeps a player's identity and score across rounds and reloads. **Leave** removes the player. |
 | `/host` | Big screen. Asks for the admin code before showing the QR code (voxel hexagon mask). The admin panel drops down from the top bar over the game. Next question, Questions (lists questions and answers from Valkey), Reset game (clears players, scores and rounds), Log out. |
 | `/commands` | Command stream and commands/s gauge only. |
-| `/how` | Use case diagram, and for each use case the Valkey commands that implement it. |
+| `/how` | One card per use case with the Valkey commands that implement it. |
 
 ## Architecture
 

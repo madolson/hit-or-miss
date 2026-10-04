@@ -10,15 +10,6 @@
   .topbar { display: flex; align-items: center; gap: .8em; margin-bottom: 1em; }
   .topbar img { height: 2em; }
   .topbar h1 { margin: 0; }
-  #diagram { width: 100%; display: block; }
-  #diagram .uc { cursor: pointer; }
-  #diagram .uc ellipse { fill: #18214a; stroke: #6983ff; stroke-width: 2; }
-  #diagram .uc:hover ellipse { fill: #24306a; }
-  #diagram .uc text, #diagram .actor text { fill: #eef1ff; font-size: 15px; text-anchor: middle; dominant-baseline: middle; }
-  #diagram .actor line, #diagram .actor circle { stroke: #ccf1ff; stroke-width: 3; fill: none; }
-  #diagram .assoc { stroke: #6f78a8; stroke-width: 1.5; }
-  #diagram .boundary { fill: none; stroke: #3a4470; stroke-width: 2; }
-  #diagram .boundary-label { fill: #9aa4d1; font-size: 18px; font-weight: 700; }
   .cases { display: grid; grid-template-columns: repeat(auto-fill, minmax(560px, 1fr)); gap: 1em; margin-top: 1.5em; }
   .case h2 { margin-bottom: .2em; }
   .case .who { color: #9aa4d1; margin: 0 0 .6em; }
@@ -26,14 +17,12 @@
   .case td { padding: .35em .4em; border-top: 1px solid #2a3466; vertical-align: top; }
   .case td:first-child { width: 48%; }
   .case code { font: 12.5px/1.4 ui-monospace, Menlo, monospace; color: #ffcf5c; word-break: break-word; }
-  .case:target { outline: 2px solid #6983ff; }
-</style>
+  </style>
 </head>
 <body>
 <main>
   <header class="topbar"><img src="/valkey-logo.svg" alt=""><h1>Hit or Miss · How it works</h1></header>
-  <p class="muted">Every piece of game state lives in ElastiCache for Valkey. Click a use case to see the commands that implement it. They are the same commands that scroll by on the host screen.</p>
-  <svg id="diagram" viewBox="0 0 1200 900"></svg>
+  <p class="muted">Every piece of game state lives in ElastiCache for Valkey. Each card is one use case and the commands that implement it, the same commands that scroll by on the host screen.</p>
   <div class="cases" id="cases"></div>
 </main>
 <script>
@@ -121,62 +110,6 @@ const CASES = [
     ['XADD valkey:commands MAXLEN ~ 5000 * src <client> cmd <name> args <args>', 'Append each one. Commands that touch valkey:commands are skipped, or every entry would log another.'],
   ] },
 ];
-
-// ---- Use case diagram ----
-const NS = 'http://www.w3.org/2000/svg';
-const svg = document.getElementById('diagram');
-const node = (tag, attrs, parent = svg) => {
-  const e = document.createElementNS(NS, tag);
-  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
-  parent.append(e);
-  return e;
-};
-
-const left = CASES.filter((c) => !c.actors.includes(S));
-const right = CASES.filter((c) => c.actors.includes(S));
-const TOP = 115, GAP = 88;
-const pos = {};
-left.forEach((c, i) => { pos[c.id] = [440, TOP + i * GAP]; });
-const rightTop = TOP + ((left.length - right.length) * GAP) / 2;
-right.forEach((c, i) => { pos[c.id] = [790, rightTop + i * GAP]; });
-const bottom = TOP + (left.length - 1) * GAP;
-
-const center = (actor) => {
-  const ys = CASES.filter((c) => c.actors.includes(actor)).map((c) => pos[c.id][1]);
-  return (Math.min(...ys) + Math.max(...ys)) / 2;
-};
-const ACTORS = [[P, 110, center(P)], [H, 110, center(H)], [S, 1100, center(S)]];
-
-node('rect', { class: 'boundary', x: 280, y: 30, width: 680, height: bottom + 40, rx: 16 });
-node('text', { class: 'boundary-label', x: 300, y: 58 }).textContent = 'Hit or Miss';
-
-for (const c of CASES) {
-  for (const a of c.actors) {
-    const [, ax, ay] = ACTORS.find((x) => x[0] === a);
-    const [x, y] = pos[c.id];
-    const fromX = ax < x ? ax + 30 : ax - 30;
-    const toX = ax < x ? x - 130 : x + 130;
-    node('line', { class: 'assoc', x1: fromX, y1: ay - 10, x2: toX, y2: y });
-  }
-}
-
-for (const [name, x, y] of ACTORS) {
-  const g = node('g', { class: 'actor' });
-  node('circle', { cx: x, cy: y - 52, r: 14 }, g);
-  node('line', { x1: x, y1: y - 38, x2: x, y2: y + 4 }, g);
-  node('line', { x1: x - 24, y1: y - 24, x2: x + 24, y2: y - 24 }, g);
-  node('line', { x1: x, y1: y + 4, x2: x - 18, y2: y + 34 }, g);
-  node('line', { x1: x, y1: y + 4, x2: x + 18, y2: y + 34 }, g);
-  node('text', { x, y: y + 56 }, g).textContent = name;
-}
-
-for (const c of CASES) {
-  const [x, y] = pos[c.id];
-  const a = node('a', { href: `#uc-${c.id}`, class: 'uc' });
-  node('ellipse', { cx: x, cy: y, rx: 130, ry: 32 }, a);
-  node('text', { x, y }, a).textContent = c.name;
-}
-svg.setAttribute('viewBox', `0 0 1200 ${bottom + 110}`);
 
 // ---- Command detail per use case ----
 const box = document.getElementById('cases');
