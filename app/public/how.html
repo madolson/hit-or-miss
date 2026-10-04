@@ -12,6 +12,22 @@
   .topbar h1 { margin: 0; }
   .cases { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(560px, 100%), 1fr)); gap: 1em; margin-top: 1.5em; }
   .topbar a { color: #9aa4d1; }
+  .arch { display: flex; align-items: center; gap: .6em; margin-top: 1.5em; }
+  .arch .actors { display: flex; flex-direction: column; gap: .6em; }
+  .arch .node { background: #18214a; border: 1px solid #3a4470; border-radius: 12px; padding: .8em 1em; text-align: center; flex: 1; }
+  .arch .actors .node { flex: none; }
+  .arch .node strong { display: block; white-space: nowrap; }
+  .arch .node small { color: #9aa4d1; }
+  .arch .valkey { border-color: #6983ff; box-shadow: 0 0 18px #6983ff55; flex: 1.4; }
+  .arch .arrow { color: #9aa4d1; text-align: center; font-size: .8em; flex: none; width: 5.5em; }
+  .arch .arrow::before { content: '→'; display: block; font-size: 2em; color: #ccf1ff; }
+  @media (max-width: 800px) {
+    .arch { flex-direction: column; align-items: stretch; }
+    .arch .actors { flex-direction: row; }
+    .arch .actors .node { flex: 1; }
+    .arch .arrow { width: auto; }
+    .arch .arrow::before { content: '↓'; }
+  }
   @media (max-width: 600px) { main { padding: .8em; } .topbar h1 { font-size: 1.3em; } .case td:first-child { width: 55%; } }
   .case h2 { margin-bottom: .2em; }
   .case .who { color: #9aa4d1; margin: 0 0 .6em; }
@@ -25,6 +41,20 @@
 <main>
   <header class="topbar"><img src="/valkey-logo.svg" alt=""><h1>Hit or Miss · How it works</h1><span style="flex:1"></span><a href="https://github.com/madolson/hit-or-miss">Code on GitHub</a></header>
   <p class="muted">Every piece of game state lives in ElastiCache for Valkey. Each card is one use case and the commands that implement it, the same commands that scroll by on the host screen.</p>
+  <div class="arch" aria-label="Architecture">
+    <div class="actors">
+      <div class="node"><strong>Player</strong><small>phone, joins by QR code</small></div>
+      <div class="node"><strong>Host</strong><small>big screen, admin code</small></div>
+    </div>
+    <div class="arrow">HTTPS and live updates</div>
+    <div class="node"><strong>CloudFront</strong><small>TLS, no caching</small></div>
+    <div class="arrow"></div>
+    <div class="node"><strong>Load balancer</strong><small>any server for any request</small></div>
+    <div class="arrow"></div>
+    <div class="node"><strong>App servers × 2</strong><small>Fargate, Node.js</small></div>
+    <div class="arrow">commands and streams</div>
+    <div class="node valkey"><strong>ElastiCache for Valkey</strong><small>1 primary + 1 replica, durable. Every player, answer and score, the event stream, and the command log.</small></div>
+  </div>
   <div class="cases" id="cases"></div>
 </main>
 <script>
