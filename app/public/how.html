@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hit or Miss · How it works</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  main { max-width: 1240px; margin: 0 auto; padding: 1.5em; }
+  .topbar { display: flex; align-items: center; gap: .8em; margin-bottom: 1em; }
+  .topbar img { height: 2em; }
+  .topbar h1 { margin: 0; }
+  #diagram { width: 100%; display: block; }
+  #diagram .uc { cursor: pointer; }
+  #diagram .uc ellipse { fill: #18214a; stroke: #6983ff; stroke-width: 2; }
+  #diagram .uc:hover ellipse { fill: #24306a; }
+  #diagram .uc text, #diagram .actor text { fill: #eef1ff; font-size: 15px; text-anchor: middle; dominant-baseline: middle; }
+  #diagram .actor line, #diagram .actor circle { stroke: #ccf1ff; stroke-width: 3; fill: none; }
+  #diagram .assoc { stroke: #6f78a8; stroke-width: 1.5; }
+  #diagram .boundary { fill: none; stroke: #3a4470; stroke-width: 2; }
+  #diagram .boundary-label { fill: #9aa4d1; font-size: 18px; font-weight: 700; }
+  .cases { display: grid; grid-template-columns: repeat(auto-fill, minmax(560px, 1fr)); gap: 1em; margin-top: 1.5em; }
+  .case h2 { margin-bottom: .2em; }
+  .case .who { color: #9aa4d1; margin: 0 0 .6em; }
+  .case table { width: 100%; border-collapse: collapse; font-size: .92em; }
+  .case td { padding: .35em .4em; border-top: 1px solid #2a3466; vertical-align: top; }
+  .case td:first-child { width: 48%; }
+  .case code { font: 12.5px/1.4 ui-monospace, Menlo, monospace; color: #ffcf5c; word-break: break-word; }
+  .case:target { outline: 2px solid #6983ff; }
+</style>
+</head>
+<body>
+<main>
+  <header class="topbar"><img src="/valkey-logo.svg" alt=""><h1>Hit or Miss · How it works</h1></header>
+  <p class="muted">Every piece of game state lives in ElastiCache for Valkey. Click a use case to see the commands that implement it. They are the same commands that scroll by on the host screen.</p>
+  <svg id="diagram" viewBox="0 0 1200 900"></svg>
+  <div class="cases" id="cases"></div>
+</main>
+<script>
+const P = 'Player', H = 'Host', S = 'App servers';
+const CASES = [
+  { id: 'join', name: 'Join the game', actors: [P], how: 'POST /api/join. A cookie holds a random player id, so the same phone stays the same player across rounds and reloads.', cmds: [
+    ['HSET players <pid> <name>', 'Store the display name under the player id.'],
+    ['ZADD leaderboard NX 0 <pid>', 'Put the player on the board at 0. NX never resets an existing score.'],
+    ['HLEN players', 'Player count for the host screen.'],
+    ['XADD game:events MAXLEN ~ 1000 * type players count <n>', 'Tell every server, each of which pushes the new count to its screens.'],
+  ] },
+  { id: 'answer', name: 'Lock in an answer', actors: [P], how: 'POST /api/answer. Only the first answer per player counts, and Valkey enforces it rather than the app.', cmds: [
+    ['HGET players <pid>', 'Check the player has joined.'],
+    ['HGETALL game:round', 'Current round number, start time and question index.'],
+    ['TIME', 'Valkey\'s clock is the one clock every server shares, so elapsed time is the same whichever server takes the request.'],
+    ['HSETNX round:<n>:answers <pid> <choice>', 'Returns 0 if this player already answered. One answer per question, atomically.'],
+    ['LINDEX {questions} <qi>', 'The correct option and the question\'s point value.'],
+    ['HSET round:<n>:points <pid> <points>', 'Points for this question: full until 20s, then falling to 0 at 30s.'],
+    ['ZINCRBY leaderboard <points> <pid>', 'The sorted set keeps the ranking ordered.'],
+    ['XADD game:events MAXLEN ~ 1000 * type guess ...', 'Fanned out to every server, which holds it back from screens until the 20s reveal.'],
+  ] },
+  { id: 'leave', name: 'Leave the game', actors: [P], how: 'POST /api/leave clears the cookie and removes the player.', cmds: [
+    ['HDEL players <pid>', 'Forget the name.'],
+    ['ZREM leaderboard <pid>', 'Take the player off the board.'],
+    ['HLEN players', 'New player count.'],
+    ['XADD game:events MAXLEN ~ 1000 * type players count <n>', 'Update every screen.'],
+  ] },
+  { id: 'view', name: 'Follow the live game', actors: [P, H], how: 'GET /api/state on page load and after every reconnect, then server-sent events from whichever server the load balancer picked.', cmds: [
+    ['HGETALL game:round', 'Which question is running and when it started.'],
+    ['LINDEX {questions} <qi>', 'The question and its options.'],
+    ['LLEN {questions}', 'How many questions there are.'],
+    ['HLEN players', 'Player count.'],
+    ['ZREVRANGE leaderboard 0 -1 WITHSCORES', 'The ranked board.'],
+    ['HMGET players <pid> ...', 'Names for the board and the guesses.'],
+    ['HGET round:<n>:answers <pid>', 'Your locked-in choice, so a reload keeps it.'],
+    ['HGETALL round:<n>:answers', 'Everyone\'s guesses, only after the 20s reveal.'],
+    ['HGET round:<n>:points <pid>', 'Your points, once the question is over.'],
+  ] },
+  { id: 'signin', name: 'Sign in as host', actors: [H], how: 'POST /api/host/login. The admin code is checked in the app against the key Fargate injects from Secrets Manager. No Valkey commands, and the QR code stays hidden until it passes.', cmds: [] },
+  { id: 'next', name: 'Start the next question', actors: [H], how: 'POST /api/host/next.', cmds: [
+    ['SET game:active 1 PX 31000 NX', 'A lock held for the length of a round, so a second click mid-round fails. It expires on its own.'],
+    ['LLEN {questions}', 'Total questions.'],
+    ['GET game:round:n', 'Stop after the last question. If the game is over, DEL game:active releases the lock.'],
+    ['INCR game:round:n', 'The new question number.'],
+    ['LINDEX {questions} <qi>', 'The question to send out.'],
+    ['TIME', 'The round\'s start time, on the shared clock.'],
+    ['HSET game:round n <n> start <ms> qi <qi>', 'The current round, for answers and late joiners.'],
+    ['XADD game:events MAXLEN ~ 1000 * type round ...', 'Every server starts its 20s reveal and 30s end timers off this start time.'],
+  ] },
+  { id: 'questions', name: 'List questions and answers', actors: [H], how: 'GET /api/host/questions, admin code required.', cmds: [
+    ['LRANGE {questions} 0 -1', 'The whole bank: question, options, answer and points, as JSON per entry.'],
+  ] },
+  { id: 'reset', name: 'Reset the game', actors: [H], how: 'POST /api/host/reset.', cmds: [
+    ['GET game:round:n', 'How many rounds of keys to clean up.'],
+    ['DEL players / leaderboard / game:round:n / game:round / game:active / round:<i>:answers / round:<i>:points', 'One key per DEL: in cluster mode the keys hash to different slots.'],
+    ['XADD game:events MAXLEN ~ 1000 * type reset', 'Servers cancel pending timers and every phone goes back to the join screen.'],
+  ] },
+  { id: 'watch', name: 'Watch the command stream', actors: [H], how: 'The host screen and /commands subscribe with ?commands. The gauge counts arrivals per second.', cmds: [
+    ['XREVRANGE valkey:commands + - COUNT 100', 'The last 100 commands, so the panel isn\'t empty on connect.'],
+    ['XREAD BLOCK 0 COUNT 500 STREAMS valkey:commands <id>', 'Each server tails the stream on its own connection and pushes new entries to its screens.'],
+  ] },
+  { id: 'seed', name: 'Load the question bank', actors: [S], how: 'On server start. app/questions.json is loaded only when its hash changes.', cmds: [
+    ['GET {questions}:version', 'The hash of the file the bank was loaded from.'],
+    ['MULTI · DEL {questions} · RPUSH {questions} <json> ... · SET {questions}:version <sha1> · EXEC', 'The {questions} hash tag puts both keys in one slot, so the swap is one atomic transaction.'],
+  ] },
+  { id: 'fanout', name: 'Fan out game events', actors: [S], how: 'Every server tails game:events, so any server can serve any phone and none of them needs sticky sessions.', cmds: [
+    ['XREVRANGE game:events + - COUNT 1', 'Start after the newest event.'],
+    ['XREAD BLOCK 0 STREAMS game:events <id>', 'Block on a dedicated connection until the next event, then push it to this server\'s screens.'],
+  ] },
+  { id: 'reveal', name: 'Reveal guesses at 20s', actors: [S], how: 'A timer on every server, set from the round\'s start time.', cmds: [
+    ['HGETALL round:<n>:answers', 'Everything locked in so far.'],
+    ['HMGET players <pid> ...', 'Names to show beside the guesses.'],
+  ] },
+  { id: 'score', name: 'Score the question at 30s', actors: [S], how: 'A timer on every server. Each phone is sent its own points and rank.', cmds: [
+    ['LINDEX {questions} <qi>', 'The correct option to highlight.'],
+    ['HGETALL round:<n>:points', 'Who scored what this question.'],
+    ['ZREVRANGE leaderboard 0 -1 WITHSCORES', 'The full ranking, for the top 10 and each player\'s rank.'],
+    ['HMGET players <pid> ...', 'Names for the board.'],
+    ['LLEN {questions}', 'Whether this was the final question.'],
+  ] },
+  { id: 'monitor', name: 'Record every command', actors: [S], how: 'One server at a time holds a 10s lease and runs MONITOR on the shard primary. If it dies, another takes over within 10s.', cmds: [
+    ['SET monitor:leader <id> PX 10000 NX', 'Take the lease if nobody holds it.'],
+    ['EVAL "if server.call(\'GET\', KEYS[1]) == ARGV[1] then return server.call(\'PEXPIRE\', KEYS[1], ARGV[2]) end return 0" 1 monitor:leader <id> 10000', 'Renew the lease only if it is still ours, every 3.3s.'],
+    ['MONITOR', 'Every command the primary executes, from every client.'],
+    ['XADD valkey:commands MAXLEN ~ 5000 * src <client> cmd <name> args <args>', 'Append each one. Commands that touch valkey:commands are skipped, or every entry would log another.'],
+  ] },
+];
+
+// ---- Use case diagram ----
+const NS = 'http://www.w3.org/2000/svg';
+const svg = document.getElementById('diagram');
+const node = (tag, attrs, parent = svg) => {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  parent.append(e);
+  return e;
+};
+
+const left = CASES.filter((c) => !c.actors.includes(S));
+const right = CASES.filter((c) => c.actors.includes(S));
+const TOP = 115, GAP = 88;
+const pos = {};
+left.forEach((c, i) => { pos[c.id] = [440, TOP + i * GAP]; });
+const rightTop = TOP + ((left.length - right.length) * GAP) / 2;
+right.forEach((c, i) => { pos[c.id] = [790, rightTop + i * GAP]; });
+const bottom = TOP + (left.length - 1) * GAP;
+
+const center = (actor) => {
+  const ys = CASES.filter((c) => c.actors.includes(actor)).map((c) => pos[c.id][1]);
+  return (Math.min(...ys) + Math.max(...ys)) / 2;
+};
+const ACTORS = [[P, 110, center(P)], [H, 110, center(H)], [S, 1100, center(S)]];
+
+node('rect', { class: 'boundary', x: 280, y: 30, width: 680, height: bottom + 40, rx: 16 });
+node('text', { class: 'boundary-label', x: 300, y: 58 }).textContent = 'Hit or Miss';
+
+for (const c of CASES) {
+  for (const a of c.actors) {
+    const [, ax, ay] = ACTORS.find((x) => x[0] === a);
+    const [x, y] = pos[c.id];
+    const fromX = ax < x ? ax + 30 : ax - 30;
+    const toX = ax < x ? x - 130 : x + 130;
+    node('line', { class: 'assoc', x1: fromX, y1: ay - 10, x2: toX, y2: y });
+  }
+}
+
+for (const [name, x, y] of ACTORS) {
+  const g = node('g', { class: 'actor' });
+  node('circle', { cx: x, cy: y - 52, r: 14 }, g);
+  node('line', { x1: x, y1: y - 38, x2: x, y2: y + 4 }, g);
+  node('line', { x1: x - 24, y1: y - 24, x2: x + 24, y2: y - 24 }, g);
+  node('line', { x1: x, y1: y + 4, x2: x - 18, y2: y + 34 }, g);
+  node('line', { x1: x, y1: y + 4, x2: x + 18, y2: y + 34 }, g);
+  node('text', { x, y: y + 56 }, g).textContent = name;
+}
+
+for (const c of CASES) {
+  const [x, y] = pos[c.id];
+  const a = node('a', { href: `#uc-${c.id}`, class: 'uc' });
+  node('ellipse', { cx: x, cy: y, rx: 130, ry: 32 }, a);
+  node('text', { x, y }, a).textContent = c.name;
+}
+svg.setAttribute('viewBox', `0 0 1200 ${bottom + 110}`);
+
+// ---- Command detail per use case ----
+const box = document.getElementById('cases');
+for (const c of CASES) {
+  const card = el('section', 'card case');
+  card.id = `uc-${c.id}`;
+  card.append(el('h2', null, c.name), el('p', 'who', c.actors.join(', ')), el('p', null, c.how));
+  if (c.cmds.length) {
+    const table = el('table');
+    for (const [cmd, why] of c.cmds) {
+      const tr = el('tr');
+      const td = el('td');
+      td.append(el('code', null, cmd));
+      tr.append(td, el('td', null, why));
+      table.append(tr);
+    }
+    card.append(table);
+  }
+  box.append(card);
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+</script>
+</body>
+</html>

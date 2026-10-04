@@ -332,7 +332,7 @@ async function questions() {
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 const PUBLIC = path.join(import.meta.dirname, 'public');
 const files = Object.fromEntries(fs.readdirSync(PUBLIC).map((f) => [f, fs.readFileSync(path.join(PUBLIC, f))]));
-const PAGES = { '/play': 'play.html', '/host': 'host.html', '/commands': 'commands.html' };
+const PAGES = { '/play': 'play.html', '/host': 'host.html', '/commands': 'commands.html', '/how': 'how.html' };
 
 function cookiePid(req) {
   const m = /(?:^|;\s*)pid=([0-9a-f-]{36})/.exec(req.headers.cookie ?? '');

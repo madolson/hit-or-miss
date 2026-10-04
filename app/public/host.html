@@ -7,12 +7,19 @@
 <link rel="stylesheet" href="/app.css">
 <style>
   body { height: 100vh; overflow: hidden; }
-  .layout { display: grid; grid-template-columns: 340px 1fr 420px; gap: 1em; padding: 1em; height: 100%; }
-  .layout.admin-hidden { grid-template-columns: 1fr 420px; }
-  .layout.admin-hidden #admin-col { display: none; }
-  /* One toggle, fixed at the admin card's top-left, so it stays put when the column hides. */
-  #admin-toggle { position: fixed; top: 2.2em; left: 2.2em; z-index: 3; }
-  .layout.admin-hidden { padding-top: 4.6em; }
+  .topbar { height: 4em; display: flex; align-items: center; gap: .8em; padding: 0 1em; border-bottom: 1px solid #2a3466; }
+  .topbar img { height: 2em; }
+  .topbar h1 { margin: 0; font-size: 1.6em; }
+  .topbar .spacer { flex: 1; }
+  .topbar a { color: #9aa4d1; }
+  .layout { display: grid; grid-template-columns: 1fr 420px; gap: 1em; padding: 1em; height: calc(100vh - 4em); }
+  /* The admin panel drops down over the game, so nothing underneath moves. */
+  .drawer { position: fixed; top: 4.5em; left: 1em; z-index: 5; display: flex; gap: 1em; align-items: start;
+    transition: transform .3s ease, opacity .3s ease; }
+  .drawer.closed { transform: translateY(-110%); opacity: 0; pointer-events: none; }
+  .drawer .card { border: 1px solid #2a3466; box-shadow: 0 12px 40px #000a; }
+  .qr-card { width: 340px; }
+  .controls-card { width: 300px; }
   .col { display: flex; flex-direction: column; gap: 1em; min-height: 0; }
   /* The middle column must fit the screen: the round keeps its size, the leaderboard gives way. */
   .center { position: relative; overflow: hidden; }
@@ -20,7 +27,6 @@
   .board-card { flex: 1; min-height: 0; overflow: hidden; }
   #questions { position: absolute; inset: 0; z-index: 2; overflow: auto; box-shadow: 0 0 0 100vmax #0008; }
   .admin-head { display: flex; justify-content: flex-end; margin-bottom: .5em; }
-  .admin-spacer { height: 2.6em; }
   .idle-head { display: flex; justify-content: space-between; align-items: start; gap: 1em; }
   #qr { width: 100%; border-radius: 10px; }
   #join-url { word-break: break-all; font-size: .9em; }
@@ -44,15 +50,21 @@
   <p id="login-status" class="muted"></p>
 </form>
 
-<div id="app" class="layout hidden">
-  <div class="col" id="admin-col">
-    <div class="card">
-      <div class="admin-spacer"></div>
+<div id="app" class="hidden">
+<header class="topbar">
+  <img src="/valkey-logo.svg" alt="">
+  <h1>Hit or Miss</h1>
+  <span class="spacer"></span>
+  <a href="/how" target="_blank">How it works</a>
+  <button id="admin-toggle" class="ghost">Admin ▼</button>
+</header>
+<div id="admin" class="drawer">
+    <div class="card qr-card">
       <canvas id="qr"></canvas>
       <p>Scan to join<br><span id="join-url" class="muted"></span></p>
       <p><strong id="players">0</strong> players</p>
     </div>
-    <div class="card">
+    <div class="card controls-card">
       <div class="controls">
         <button id="next">Next question</button>
         <button id="show-questions" class="ghost">Questions</button>
@@ -61,8 +73,9 @@
       </div>
       <p id="host-status" class="muted"></p>
     </div>
-  </div>
+</div>
 
+<div class="layout">
   <div class="col center">
     <div id="questions" class="card hidden">
       <div class="admin-head"><button id="close-questions" class="ghost">Close</button></div>
@@ -70,7 +83,7 @@
       <ol class="qlist" id="qlist"></ol>
     </div>
     <div id="idle" class="card">
-      <div class="idle-head"><h1>Hit or Miss</h1><button id="rules-toggle" class="ghost">Hide instructions</button></div>
+      <div class="idle-head"><h2>How to play</h2><button id="rules-toggle" class="ghost">Hide instructions</button></div>
       <p class="rules">Each question runs 30 seconds. Lock in during the first 20 seconds for full points, while nobody can see anyone else's answer. In the last 10 seconds everyone's guesses appear and the points drop to zero. Wrong answers score nothing, and you get one answer per question.</p>
     </div>
     <div id="round" class="hidden">
@@ -94,7 +107,7 @@
     </div>
   </div>
 </div>
-<button id="admin-toggle" class="ghost hidden">Hide ◀</button>
+</div>
 <script src="/qrcode.js"></script>
 <script src="/qr.js"></script>
 <script src="/game.js"></script>
@@ -145,7 +158,6 @@ async function load() {
 function start() {
   show('login', false);
   show('app', true);
-  show('admin-toggle', true);
   setAdminHidden(!!localStorage.adminHidden);
   setRulesHidden(!!localStorage.rulesHidden);
   const joinUrl = `${location.origin}/play`;
@@ -203,8 +215,8 @@ $('close-questions').onclick = () => show('questions', false);
 
 function setAdminHidden(hidden) {
   localStorage.adminHidden = hidden ? '1' : '';
-  $('app').classList.toggle('admin-hidden', hidden);
-  $('admin-toggle').textContent = hidden ? 'Admin ▶' : 'Hide ◀';
+  $('admin').classList.toggle('closed', hidden);
+  $('admin-toggle').textContent = hidden ? 'Admin ▼' : 'Hide admin ▲';
 }
 $('admin-toggle').onclick = () => setAdminHidden(!localStorage.adminHidden);
 
