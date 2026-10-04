@@ -15,7 +15,7 @@ All state lives in Valkey. Every command Valkey executes, captured with `MONITOR
 
 ## Architecture
 
-ALB → 2 Fargate tasks (ARM64, Node 22) → ElastiCache Valkey 9.1, cluster mode with one shard (1 primary, 1 replica), Multi-AZ, `Durability: sync`, TLS, `cache.m7g.large`. Durability requires cluster mode and isn't supported on `t4g`. Browsers get updates over Server-Sent Events. Each task tails the `game:events` stream with `XREAD BLOCK` and fans out to its own browsers, so any task can serve any player.
+CloudFront (HTTPS, caching off) → ALB → 2 Fargate tasks (ARM64, Node 22) → ElastiCache Valkey 9.1, cluster mode with one shard (1 primary, 1 replica), Multi-AZ, `Durability: sync`, TLS, `cache.m7g.large`. Durability requires cluster mode and isn't supported on `t4g`. Browsers get updates over Server-Sent Events. Each task tails the `game:events` stream with `XREAD BLOCK` and fans out to its own browsers, so any task can serve any player.
 
 Round timing uses Valkey `TIME` as the single clock. Each task schedules its own 5s reveal and 15s end off the round's start time.
 

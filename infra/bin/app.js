@@ -5,6 +5,8 @@ const ecs = require('aws-cdk-lib/aws-ecs');
 const ecsPatterns = require('aws-cdk-lib/aws-ecs-patterns');
 const elasticache = require('aws-cdk-lib/aws-elasticache');
 const secrets = require('aws-cdk-lib/aws-secretsmanager');
+const cloudfront = require('aws-cdk-lib/aws-cloudfront');
+const origins = require('aws-cdk-lib/aws-cloudfront-origins');
 const { Platform } = require('aws-cdk-lib/aws-ecr-assets');
 
 class GameStack extends cdk.Stack {
@@ -75,7 +77,22 @@ class GameStack extends cdk.Stack {
     svc.targetGroup.setAttribute('deregistration_delay.timeout_seconds', '10');
     cacheSg.addIngressRule(svc.service.connections.securityGroups[0], ec2.Port.tcp(6379));
 
-    new cdk.CfnOutput(this, 'HostUrl', { value: `http://${svc.loadBalancer.loadBalancerDnsName}/host` });
+    // HTTPS with a valid certificate, no domain needed. Caching off and everything
+    // forwarded, so cookies, the host key header and server-sent events pass through.
+    const cdn = new cloudfront.Distribution(this, 'Cdn', {
+      defaultBehavior: {
+        origin: new origins.LoadBalancerV2Origin(svc.loadBalancer, {
+          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+          readTimeout: cdk.Duration.seconds(60),
+        }),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+      },
+    });
+
+    new cdk.CfnOutput(this, 'HostUrl', { value: `https://${cdn.distributionDomainName}/host` });
     new cdk.CfnOutput(this, 'HostKeyCommand', {
       value: `aws secretsmanager get-secret-value --region ${this.region} --secret-id ${hostKey.secretArn} --query SecretString --output text`,
     });
