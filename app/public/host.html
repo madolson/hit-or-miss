@@ -33,7 +33,7 @@
   #q { font-size: clamp(1.3em, 2.3vw, 2.2em); }
   .opt { font-size: clamp(1em, 1.4vw, 1.4em); min-height: 3.6em; }
   .controls { display: grid; grid-template-columns: 1fr 1fr; gap: .5em; }
-  .controls #next { grid-column: 1 / -1; }
+  #next-status { color: #ffcf5c; }
   .cmds-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   #cmds { flex: 1; }
   #login { max-width: 420px; margin: 20vh auto; display: flex; flex-direction: column; gap: .7em; }
@@ -55,6 +55,8 @@
   <img src="/valkey-logo.svg" alt="">
   <h1>Hit or Miss</h1>
   <span class="spacer"></span>
+  <span id="next-status"></span>
+  <button id="next">Next question</button>
   <a href="/how" target="_blank">How it works</a>
   <button id="admin-toggle" class="ghost">Admin ▼</button>
 </header>
@@ -66,7 +68,6 @@
     </div>
     <div class="card controls-card">
       <div class="controls">
-        <button id="next">Next question</button>
         <button id="show-questions" class="ghost">Questions</button>
         <button id="reset" class="ghost">Reset game</button>
         <button id="logout" class="ghost">Log out</button>
@@ -196,7 +197,7 @@ $('login').onsubmit = (e) => { e.preventDefault(); login($('key').value); };
 
 $('next').onclick = async () => {
   const res = await hostApi('/api/host/next');
-  $('host-status').textContent = res.ok ? '' : (await res.json()).error;
+  $('next-status').textContent = res.ok ? '' : (await res.json()).error;
 };
 
 $('show-questions').onclick = async () => {
