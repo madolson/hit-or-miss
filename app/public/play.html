@@ -11,6 +11,10 @@
   header img { height: 32px; }
   header .score { margin-left: auto; font-variant-numeric: tabular-nums; }
   #join-form { display: flex; flex-direction: column; gap: .7em; }
+  .react { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6em; margin-top: 1em; }
+  .react button { background: #18214a; border: 1px solid #3a4470; font-size: 1.8em; padding: .4em 0; line-height: 1; }
+  .react button:active { transform: scale(.92); }
+  .react img { height: 1em; vertical-align: middle; }
   .links { margin-top: 1.5em; text-align: center; color: #9aa4d1; }
   .links a { color: #9aa4d1; }
 </style>
@@ -45,6 +49,12 @@
     <div class="options" id="options"></div>
     <p id="status" class="muted"></p>
   </section>
+  <div class="react hidden" id="react">
+    <button data-kind="heart" aria-label="Heart">❤️</button>
+    <button data-kind="thumbs" aria-label="Thumbs up">👍</button>
+    <button data-kind="rocket" aria-label="Rocket">🚀</button>
+    <button data-kind="valkey" aria-label="Valkey"><img src="/valkey-logo.svg" alt=""></button>
+  </div>
   <footer class="links"><a href="/how">How it works</a> · <a href="https://github.com/madolson/hit-or-miss">Code</a></footer>
 </main>
 <script src="/game.js"></script>
@@ -80,6 +90,7 @@ function render() {
   show('join', !me);
   show('wait', !!me && !round);
   show('round', !!me && !!round);
+  show('react', !!me);
   renderMe();
   if (!me || !round) return;
   $('worth').textContent = round.points ? `${round.points} pts` : 'warm-up, no points';
@@ -128,6 +139,16 @@ $('join-form').onsubmit = async (e) => {
   if (code !== 200) return alert(body.error);
   connect();
 };
+
+// Each press is one XADD; a short cooldown keeps one phone from flooding the screen.
+let lastReact = 0;
+document.querySelectorAll('#react button').forEach((b) => {
+  b.onclick = () => {
+    if (Date.now() - lastReact < 300) return;
+    lastReact = Date.now();
+    api('/api/react', { kind: b.dataset.kind });
+  };
+});
 
 $('leave').onclick = async () => {
   if (!confirm('Leave the game? Your score will be removed.')) return;

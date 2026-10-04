@@ -42,6 +42,10 @@
   .qlist { margin: 0; padding-left: 1.4em; }
   .qlist li { margin-bottom: .8em; }
   .qlist .right { color: #2fd18b; font-weight: 700; }
+  #reactions { position: fixed; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
+  #reactions > * { position: absolute; font-size: 3em; animation: float 2.6s ease-out forwards; }
+  #reactions img { width: 1em; height: 1.15em; }
+  @keyframes float { 0% { opacity: 0; transform: translateY(20px) scale(.6); } 15% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-160px) scale(1.1); } }
 </style>
 </head>
 <body>
@@ -118,6 +122,7 @@
   </div>
 </div>
 </div>
+<div id="reactions"></div>
 <script src="/qrcode.js"></script>
 <script src="/qr.js"></script>
 <script src="/game.js"></script>
@@ -126,6 +131,30 @@
 <script>
 const hostApi = (path, method = 'POST') =>
   fetch(path, { method, headers: { 'x-host-key': localStorage.hostKey ?? '' } });
+
+let board = [];
+
+// Read the reaction stream once a second and scatter that second's reactions across
+// the screen at random places and moments.
+async function pollReactions() {
+  let after = '';
+  for (;;) {
+    try {
+      const r = await (await fetch(`/api/reactions${after ? `?after=${after}` : ''}`)).json();
+      after = r.last;
+      for (const kind of r.kinds.slice(0, 60)) {
+        setTimeout(() => {
+          const n = reactionNode(kind);
+          n.style.left = `${5 + Math.random() * 88}vw`;
+          n.style.top = `${15 + Math.random() * 70}vh`;
+          n.addEventListener('animationend', () => n.remove());
+          $('reactions').append(n);
+        }, Math.random() * 1000);
+      }
+    } catch {}
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
 
 const setPlayers = (n) => document.querySelectorAll('.players-count').forEach((e) => { e.textContent = n; });
 
@@ -158,7 +187,8 @@ async function load() {
   const s = await (await fetch('/api/state')).json();
   syncClock(s.serverNow);
   setPlayers(s.players);
-  renderBoard($('board'), s.top);
+  board = s.top;
+  renderBoard($('board'), board);
   round = s.round ? newRound(s.round) : null;
   render();
 }
@@ -175,15 +205,26 @@ function start() {
 
   const es = new EventSource('/events?commands');
   es.onopen = load;
-  es.addEventListener('players', (e) => setPlayers(JSON.parse(e.data).count));
+  es.addEventListener('players', (e) => {
+    const d = JSON.parse(e.data);
+    setPlayers(d.count);
+    // Add or drop the player on the board straight away rather than at the next question's end.
+    if (!d.pid) return;
+    board = board.filter((x) => x.pid !== d.pid);
+    if (!d.left && board.length < 10) board.push({ pid: d.pid, name: d.name, score: 0 });
+    board.forEach((x, i) => { x.rank = i + 1; });
+    renderBoard($('board'), board, null, d.left ? null : d.pid);
+  });
   followRounds(es, render, (d) => {
-    renderBoard($('board'), d.top);
+    board = d.top;
+    renderBoard($('board'), board);
     $('board-title').textContent = d.final ? 'Final leaderboard' : 'Leaderboard';
   }, () => {
     $('board-title').textContent = 'Leaderboard';
     load();
   });
   watchCommands(es, $('cmds'), $('gauge'));
+  pollReactions();
 
   (function tick() {
     if (round) renderTimer($('bar'), round);

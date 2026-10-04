@@ -56,6 +56,25 @@ for (const p of [alice, bob, carol, dan]) await p.listen();
 await host.listen('?commands');
 await sleep(300);
 
+// Join and leave events carry the player, so the host board can change right away.
+const erin = new Player('erin', base(0));
+await erin.req('/api/join', { name: 'erin' });
+const [, erinState] = await erin.req('/api/state');
+await erin.req('/api/leave', {});
+await sleep(300);
+assert.ok(host.events.some(([, t, d]) => t === 'players' && d.name === 'erin' && !d.left), 'host told erin joined');
+assert.ok(host.events.some(([, t, d]) => t === 'players' && d.pid === erinState.me.pid && d.left), 'host told erin left');
+
+// Reactions: the host reads everything after the last id it saw.
+const [, start0] = await host.req('/api/reactions');
+assert.equal((await bob.req('/api/react', { kind: 'heart' }))[0], 200);
+assert.equal((await bob.req('/api/react', { kind: 'valkey' }))[0], 200);
+assert.equal((await bob.req('/api/react', { kind: 'nope' }))[0], 400);
+const [, got] = await host.req(`/api/reactions?after=${start0.last}`);
+assert.deepEqual(got.kinds, ['heart', 'valkey']);
+const [, again0] = await host.req(`/api/reactions?after=${got.last}`);
+assert.deepEqual(again0.kinds, [], 'nothing new since the last id');
+
 async function startRound() {
   const [code, nx] = await hostReq('/api/host/next');
   assert.equal(code, 200, JSON.stringify(nx));

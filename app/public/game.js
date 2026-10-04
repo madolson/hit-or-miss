@@ -74,10 +74,20 @@ function renderTimer(bar, round) {
   return p;
 }
 
-function renderBoard(ul, top, myPid) {
+const REACTION_ICONS = { heart: '❤️', thumbs: '👍', rocket: '🚀' }; // valkey is the logo
+
+function reactionNode(kind) {
+  if (kind !== 'valkey') return el('span', null, REACTION_ICONS[kind]);
+  const img = el('img');
+  img.src = '/valkey-logo.svg';
+  img.alt = 'Valkey';
+  return img;
+}
+
+function renderBoard(ul, top, myPid, fresh) {
   ul.textContent = '';
   for (const e of top) {
-    const li = el('li');
+    const li = el('li', e.pid === fresh ? 'fresh' : null);
     li.append(el('span', null, `${e.rank}. ${e.name}${e.pid === myPid ? ' (you)' : ''}`), el('span', null, e.score));
     ul.append(li);
   }

@@ -65,7 +65,7 @@ const CASES = [
     ['HSET {game}:players <pid> <name>', 'Store the display name under the player id.'],
     ['ZADD {game}:leaderboard NX 0 <pid>', 'Put the player on the board at 0. NX never resets an existing score.'],
     ['HLEN {game}:players · EXEC', 'Player count for the host screen.'],
-    ['XADD {game}:events MAXLEN ~ 1000 * type players count <n>', 'Tell every server, each of which pushes the new count to its screens.'],
+    ['XADD {game}:events MAXLEN ~ 1000 * type players count <n> pid <pid> name <name>', 'Tell every server. Host screens update the count and add the player to the leaderboard straight away.'],
   ] },
   { id: 'answer', name: 'Lock in an answer', actors: [P], how: 'POST /api/answer. The first answer wins, enforced by Valkey. Points are not worked out here, so nothing on the command stream gives away who was right before the reveal.', cmds: [
     ['HGET {game}:players <pid>', 'Check the player has joined.'],
@@ -75,7 +75,7 @@ const CASES = [
   ] },
   { id: 'leave', name: 'Leave the game', actors: [P], how: 'POST /api/leave clears the cookie and removes the player in one transaction.', cmds: [
     ['MULTI · HDEL {game}:players <pid> · ZREM {game}:leaderboard <pid> · HLEN {game}:players · EXEC', 'Name and score go together, never one without the other.'],
-    ['XADD {game}:events MAXLEN ~ 1000 * type players count <n>', 'Update every screen.'],
+    ['XADD {game}:events MAXLEN ~ 1000 * type players count <n> pid <pid> left 1', 'Every screen updates the count and drops the player from the leaderboard.'],
   ] },
   { id: 'view', name: 'Follow the live game', actors: [P, H], how: 'GET /api/state on page load and after every reconnect, then server-sent events from whichever server the load balancer picked.', cmds: [
     ['HGETALL {game}:round', 'Which question is running and when it started.'],
@@ -87,6 +87,13 @@ const CASES = [
     ['HGET {game}:round:<n>:answers <pid>', 'Your locked-in choice, so a reload keeps it.'],
     ['HGETALL {game}:round:<n>:answers', 'Everyone\'s guesses, only after the 20s reveal.'],
     ['HGET {game}:round:<n>:points <pid>', 'Your points, once the question is over.'],
+  ] },
+  { id: 'react', name: 'Send a reaction', actors: [P], how: 'POST /api/react with ❤️, 👍, 🚀 or the Valkey logo. Append-only, so a resend just adds one more emoji.', cmds: [
+    ['XADD {game}:reactions MAXLEN ~ 1000 * kind <kind>', 'One entry per press. The phone allows one press every 300ms.'],
+  ] },
+  { id: 'reactions', name: 'Show reactions', actors: [H], how: 'The host screen reads the reaction stream once a second, then scatters that second\'s reactions across the screen at random places and moments.', cmds: [
+    ['XREVRANGE {game}:reactions + - COUNT 1', 'On load: start after the newest reaction.'],
+    ['XRANGE {game}:reactions (<last id> + COUNT 200', 'Every second: everything since the last entry seen. The ( makes the start exclusive.'],
   ] },
   { id: 'signin', name: 'Sign in as host', actors: [H], how: 'POST /api/host/login. The admin code is checked in the app against the key Fargate injects from Secrets Manager. No Valkey commands, and the QR code stays hidden until it passes.', cmds: [] },
   { id: 'next', name: 'Start the next question', actors: [H], how: 'POST /api/host/next. Only the lock holder gets past the first command, so the round number is set absolutely rather than incremented.', cmds: [
@@ -103,7 +110,7 @@ const CASES = [
   ] },
   { id: 'reset', name: 'Reset the game', actors: [H], how: 'POST /api/host/reset. Every player, answer and score is removed in one atomic step.', cmds: [
     ['HGET {game}:round n', 'How many questions\' keys to clean up.'],
-    ['MULTI · DEL {game}:players {game}:leaderboard {game}:round {game}:active {game}:round:<i>:answers {game}:round:<i>:points ... · XADD {game}:events ... type reset · EXEC', 'One DEL for every key, possible because they share a slot. Servers then cancel pending timers and every phone goes back to the join screen.'],
+    ['MULTI · DEL {game}:players {game}:leaderboard {game}:round {game}:active {game}:reactions {game}:round:<i>:answers {game}:round:<i>:points ... · XADD {game}:events ... type reset · EXEC', 'One DEL for every key, possible because they share a slot. Servers then cancel pending timers and every phone goes back to the join screen.'],
   ] },
   { id: 'watch', name: 'Watch the command stream', actors: [H], how: 'The host screen and /commands subscribe with ?commands. The gauge counts arrivals per second.', cmds: [
     ['XREVRANGE valkey:commands + - COUNT 100', 'The last 100 commands, so the panel isn\'t empty on connect.'],

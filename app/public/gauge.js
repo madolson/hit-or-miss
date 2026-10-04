@@ -1,6 +1,6 @@
 // Commands-per-second gauge. Geometry and palette follow limitsGaugePinned in
-// madolson/valkey-svgs (the "Valkey pinned near its limit" banner). The scale
-// is set so the last minute's peak lands where the banner's pointer sits.
+// madolson/valkey-svgs (the "Valkey pinned near its limit" banner). The scale is
+// logarithmic, and set so the last minute's peak lands where the banner's pointer sits.
 function createGauge(container) {
   const NS = 'http://www.w3.org/2000/svg';
   const C = { ice: '#CCF1FF', cyan: '#00A3E0', mint: '#2CD5C4', gold: '#FFB81C', coral: '#F65275', violet: '#963CBD', ink: '#060A24' };
@@ -107,8 +107,10 @@ function createGauge(container) {
     const now = Date.now();
     peaks.push([now, v]);
     while (peaks[0][0] < now - 60000) peaks.shift();
-    const max = Math.max(50, ...peaks.map((p) => p[1])) / PEAK_AT;
-    target = Math.min(1, v / max);
+    // log1p(peak) / log1p(max) = PEAK_AT, solved for max.
+    const peak = Math.max(50, ...peaks.map((p) => p[1]));
+    const max = Math.expm1(Math.log1p(peak) / PEAK_AT);
+    target = Math.min(1, Math.log1p(v) / Math.log1p(max));
     value.textContent = Math.round(v);
   };
 }

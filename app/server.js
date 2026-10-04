@@ -18,6 +18,7 @@ const K = {
   round: '{game}:round',         // hash n, start, qi of the current question
   active: '{game}:active',       // lock held while a question runs
   events: '{game}:events',       // stream fanned out to every server
+  reactions: '{game}:reactions', // stream of emoji reactions, read by host screens once a second
   answers: (n) => `{game}:round:${n}:answers`, // hash pid -> "choice:elapsedMs"
   points: (n) => `{game}:round:${n}:points`,   // hash pid -> points, written when the question ends
   questions: '{questions}',      // list of JSON questions
@@ -166,7 +167,7 @@ async function onEvent(e) {
       broadcast('guess', { n: Number(e.n), pid: e.pid, name: e.name, choice: Number(e.choice) });
     }
   } else if (e.type === 'players') {
-    broadcast('players', { count: Number(e.count) });
+    broadcast('players', { count: Number(e.count), pid: e.pid, name: e.name, left: !!e.left });
   } else if (e.type === 'reset') {
     epoch++;
     scheduledRound = revealedRound = 0;
@@ -285,14 +286,14 @@ async function join(pid, body) {
   pid ||= crypto.randomUUID();
   // HSET and ZADD NX are absolute, so joining twice is the same as joining once.
   const [, , [, count]] = await db.multi().hset(K.players, pid, name).zadd(K.board, 'NX', 0, pid).hlen(K.players).exec();
-  await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'players', 'count', count);
+  await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'players', 'count', count, 'pid', pid, 'name', name);
   return [200, { pid, name }, `pid=${pid}; Path=/; Max-Age=2592000; SameSite=Lax; HttpOnly`];
 }
 
 async function leave(pid) {
   if (pid) {
     const [, , [, count]] = await db.multi().hdel(K.players, pid).zrem(K.board, pid).hlen(K.players).exec();
-    await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'players', 'count', count);
+    await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'players', 'count', count, 'pid', pid, 'left', 1);
   }
   return [200, { ok: true }, 'pid=; Path=/; Max-Age=0'];
 }
@@ -312,6 +313,27 @@ async function answer(pid, body) {
   const locked = await db.eval(LOCK_IN, 2, K.answers(n), K.events, pid, `${choice}:${elapsed}`, n, name, choice);
   if (!locked) return [409, { error: 'already locked in' }];
   return [200, { ok: true, elapsed }];
+}
+
+const REACTIONS = ['heart', 'thumbs', 'rocket', 'valkey'];
+
+async function react(pid, body) {
+  if (!pid) return [401, { error: 'join first' }];
+  if (!REACTIONS.includes(body.kind)) return [400, { error: 'bad reaction' }];
+  // Append-only: a resent XADD only adds one more emoji to the screen.
+  await db.xadd(K.reactions, 'MAXLEN', '~', 1000, '*', 'kind', body.kind);
+  return [200, { ok: true }];
+}
+
+// Host screens call this once a second with the last id they saw.
+async function reactions(after) {
+  if (!after) {
+    const [last] = await db.xrevrange(K.reactions, '+', '-', 'COUNT', 1);
+    return [200, { last: last?.[0] ?? '0-0', kinds: [] }];
+  }
+  if (!/^\d+-\d+$/.test(after)) return [400, { error: 'bad id' }];
+  const entries = await db.xrange(K.reactions, `(${after}`, '+', 'COUNT', 200);
+  return [200, { last: entries.at(-1)?.[0] ?? after, kinds: entries.map(([, f]) => fields(f).kind) }];
 }
 
 const DENIED = [403, { error: 'bad host key' }];
@@ -337,7 +359,7 @@ async function next() {
 
 async function reset() {
   const n = Number((await db.hget(K.round, 'n')) ?? 0);
-  const keys = [K.players, K.board, K.round, K.active];
+  const keys = [K.players, K.board, K.round, K.active, K.reactions];
   for (let i = 1; i <= n; i++) keys.push(K.answers(i), K.points(i));
   // All {game} keys share a slot, so one DEL removes every player and score atomically.
   await db.multi().del(...keys).xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'reset').exec();
@@ -400,6 +422,8 @@ async function handle(req, res) {
   if (route === 'POST /api/join') return json(res, ...(await join(pid, await readJson(req))));
   if (route === 'POST /api/answer') return json(res, ...(await answer(pid, await readJson(req))));
   if (route === 'POST /api/leave') return json(res, ...(await leave(pid)));
+  if (route === 'POST /api/react') return json(res, ...(await react(pid, await readJson(req))));
+  if (route === 'GET /api/reactions') return json(res, ...(await reactions(url.searchParams.get('after'))));
 
   if (url.pathname.startsWith('/api/host/')) {
     if (req.headers['x-host-key'] !== HOST_KEY) return json(res, ...DENIED);
