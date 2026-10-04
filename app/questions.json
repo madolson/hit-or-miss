@@ -1,5 +1,6 @@
 [
   {"q": "Warm-up: have you used Valkey before?", "options": ["Yes, in production", "Yes, for side projects", "Not yet", "What's Valkey?"], "answer": null, "points": 0},
+  {"q": "Warm-up: what's your favorite Valkey data type?", "options": ["Strings", "Hashes", "Sorted sets", "Streams"], "answer": null, "points": 0},
   {"q": "How many unique people have contributed code to Valkey across all its releases?", "options": ["About 280", "About 160", "About 450", "About 650"], "answer": 0, "points": 1000},
   {"q": "How many people have participated in valkey-io/valkey on GitHub by opening, commenting on, or reviewing an issue or PR?", "options": ["About 350", "About 550", "About 1,600", "About 950"], "answer": 3, "points": 1500},
   {"q": "How many GitHub stars does valkey-io/valkey have?", "options": ["About 12,000", "About 18,000", "About 27,000", "About 42,000"], "answer": 2, "points": 2000},

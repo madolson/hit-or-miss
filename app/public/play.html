@@ -37,9 +37,8 @@
   </section>
 
   <section id="round" class="hidden">
-    <p class="muted">Question <span id="round-n"></span> · <span id="worth"></span></p>
+    <p class="muted" id="worth"></p>
     <h2 id="q"></h2>
-    <div class="timer" id="timer"><span></span><span></span></div>
     <div class="bar"><div id="bar"></div></div>
     <div class="options" id="options"></div>
     <p id="status" class="muted"></p>
@@ -80,7 +79,6 @@ function render() {
   show('round', !!me && !!round);
   renderMe();
   if (!me || !round) return;
-  $('round-n').textContent = round.n;
   $('worth').textContent = round.points ? `${round.points} pts` : 'warm-up, no points';
   $('q').textContent = round.q;
   renderOptions($('options'), round, pick);
@@ -137,7 +135,7 @@ $('leave').onclick = async () => {
 let lastPhase = -1;
 (function tick() {
   if (round && me) {
-    const p = renderTimer($('timer'), $('bar'), round);
+    const p = renderTimer($('bar'), round);
     if (p !== lastPhase) render(); // enable or lock the buttons as phases change
     lastPhase = p;
   }

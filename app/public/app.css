@@ -11,8 +11,8 @@ input { font: inherit; padding: .8em; border-radius: 10px; border: 1px solid #3a
 .card { background: #18214a; border-radius: 14px; padding: 1.2em; }
 
 .bar { height: 10px; background: #2a3466; border-radius: 5px; overflow: hidden; margin: .6em 0; }
-.bar > div { height: 100%; background: #6983ff; }
-.timer { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.bar > div { height: 100%; background: #6983ff; transition: background-color .3s; }
+.bar > div.revealed { background: #e5486b; }
 
 .options { display: grid; grid-template-columns: 1fr 1fr; gap: .7em; }
 .opt { min-height: 5em; font-size: 1.1em; text-align: left; position: relative; }

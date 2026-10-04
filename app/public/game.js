@@ -7,11 +7,6 @@ let clockOffset = 0;
 const serverNow = () => Date.now() + clockOffset;
 const syncClock = (ts) => { clockOffset = ts - Date.now(); };
 
-function pointsAt(elapsed, max) {
-  if (elapsed <= REVEAL_MS) return max;
-  return Math.max(0, Math.round((max * (ROUND_MS - elapsed)) / (ROUND_MS - REVEAL_MS)));
-}
-
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -69,15 +64,12 @@ function renderOptions(box, round, onPick) {
   });
 }
 
-// Updates a .timer/.bar pair for the current phase. Returns the phase.
-function renderTimer(label, bar, round) {
+// Shrinks the time bar, red once guesses are showing. Returns the phase.
+function renderTimer(bar, round) {
   const t = Math.max(0, serverNow() - round.start);
   const p = phase(round);
-  const until = [REVEAL_MS, ROUND_MS, ROUND_MS][p];
-  const secs = `${(Math.max(0, until - t) / 1000).toFixed(1)}s`;
   bar.style.width = `${(Math.max(0, ROUND_MS - t) / ROUND_MS) * 100}%`;
-  label.children[0].textContent = ['Answer now', 'Guesses are in', "Time's up"][p] + (p < 2 ? ` · ${secs}` : '');
-  label.children[1].textContent = p === 2 ? '' : `${pointsAt(t, round.points)} pts`;
+  bar.classList.toggle('revealed', p > 0);
   return p;
 }
 

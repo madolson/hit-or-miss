@@ -77,7 +77,13 @@ assert.equal(warm.correct, null);
 assert.equal(warm.me.points, 0);
 log('warm-up ok');
 
-// Round 2: scored.
+// Round 2: the second warm-up.
+r = await startRound();
+assert.equal(questions[r.n - 1].answer, null);
+await at(r, 31500);
+assert.equal(alice.events.find(([, t, d]) => t === 'end' && d.n === r.n)[2].correct, null);
+
+// Round 3: scored.
 r = await startRound();
 const q = questions[r.n - 1];
 const right = q.answer;

@@ -88,9 +88,8 @@
       <p class="rules">Each question runs 30 seconds. Lock in during the first 20 seconds for full points, while nobody can see anyone else's answer. In the last 10 seconds everyone's guesses appear and the points drop to zero. Wrong answers score nothing, and you get one answer per question.</p>
     </div>
     <div id="round" class="hidden">
-      <p class="muted">Question <span id="round-n"></span> of <span id="round-total"></span> · <span id="worth"></span></p>
+      <p class="muted" id="worth"></p>
       <h1 id="q"></h1>
-      <div class="timer" id="timer"><span></span><span></span></div>
       <div class="bar"><div id="bar"></div></div>
       <div class="options" id="options"></div>
     </div>
@@ -115,8 +114,6 @@
 <script src="/gauge.js"></script>
 <script src="/commands.js"></script>
 <script>
-let total = 0;
-
 const hostApi = (path, method = 'POST') =>
   fetch(path, { method, headers: { 'x-host-key': localStorage.hostKey ?? '' } });
 
@@ -124,8 +121,6 @@ function render() {
   show('idle', !round);
   show('round', !!round);
   if (!round) return;
-  $('round-n').textContent = round.n;
-  $('round-total').textContent = total;
   $('worth').textContent = round.points ? `${round.points} pts` : 'warm-up, no points';
   $('q').textContent = round.q;
   renderOptions($('options'), round, null);
@@ -149,7 +144,6 @@ function renderQuestions(qs) {
 async function load() {
   const s = await (await fetch('/api/state')).json();
   syncClock(s.serverNow);
-  total = s.total;
   $('players').textContent = s.players;
   renderBoard($('board'), s.top);
   round = s.round ? newRound(s.round) : null;
@@ -168,7 +162,6 @@ function start() {
   const es = new EventSource('/events?commands');
   es.onopen = load;
   es.addEventListener('players', (e) => { $('players').textContent = JSON.parse(e.data).count; });
-  es.addEventListener('round', (e) => { total = JSON.parse(e.data).total; });
   followRounds(es, render, (d) => {
     renderBoard($('board'), d.top);
     $('board-title').textContent = d.final ? 'Final leaderboard' : 'Leaderboard';
@@ -179,7 +172,7 @@ function start() {
   watchCommands(es, $('cmds'), $('gauge'));
 
   (function tick() {
-    if (round) renderTimer($('timer'), $('bar'), round);
+    if (round) renderTimer($('bar'), round);
     requestAnimationFrame(tick);
   })();
 }
