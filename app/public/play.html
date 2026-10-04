@@ -37,9 +37,7 @@
   </section>
 
   <section id="wait" class="card hidden">
-    <h2>You're in.</h2>
-    <p>Each question runs 30 seconds. Lock in during the first 20 seconds for full points, while nobody can see anyone else's answer. In the last 10 seconds everyone's guesses appear and the points drop to zero. Wrong answers score nothing, and you get one answer per question.</p>
-    <p class="muted">Waiting for the host to start.</p>
+    <p>30 seconds per question. Answer in the first 20 for full points. In the last 10, everyone's answers show and points drop to zero.</p>
   </section>
 
   <section id="round" class="hidden">
@@ -75,13 +73,13 @@ function renderMe() {
 
 function statusText() {
   if (round.ended) {
-    const final = round.final ? ` Game over. You finished #${me.rank}.` : '';
-    if (round.correct === null) return 'Warm-up done. The real questions are next.' + final;
-    if (!round.result?.answered) return 'You did not answer.' + final;
-    return (round.result.points ? `Correct! +${round.result.points}` : 'Wrong answer. 0 points.') + final;
+    const final = round.final ? ` Final rank #${me.rank}` : '';
+    if (round.correct === null) return final.trim();
+    if (!round.result?.answered) return 'No answer' + final;
+    return (round.result.points ? `+${round.result.points}` : 'Wrong') + final;
   }
   if (round.myChoice !== null) {
-    return round.lockedAt != null ? `Locked in at ${(round.lockedAt / 1000).toFixed(1)}s.` : 'Locked in.';
+    return 'Locked in';
   }
   return '';
 }
@@ -93,7 +91,7 @@ function render() {
   show('react', !!me);
   renderMe();
   if (!me || !round) return;
-  $('worth').textContent = round.points ? `${round.points} pts` : 'warm-up, no points';
+  $('worth').textContent = round.points ? `${round.points} pts` : '';
   $('q').textContent = round.q;
   renderOptions($('options'), round, pick);
   $('status').textContent = statusText();
@@ -103,8 +101,7 @@ async function pick(choice) {
   round.myChoice = choice;
   render();
   const [code, body] = await api('/api/answer', { n: round.n, choice });
-  if (code === 200) round.lockedAt = body.elapsed;
-  else $('status').textContent = body.error;
+  if (code !== 200) $('status').textContent = body.error;
 }
 
 async function load() {
