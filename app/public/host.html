@@ -142,7 +142,14 @@ async function pollReactions() {
     try {
       const r = await (await fetch(`/api/reactions${after ? `?after=${after}` : ''}`)).json();
       after = r.last;
-      for (const kind of r.kinds.slice(0, 60)) {
+      // Count every reaction on the board, even past the 60 a second that get drawn.
+      let changed = false;
+      for (const { pid } of r.items) {
+        const e = board.find((x) => x.pid === pid);
+        if (e) { e.reactions = (e.reactions ?? 0) + 1; changed = true; }
+      }
+      if (changed) renderBoard($('board'), board);
+      for (const { kind } of r.items.slice(0, 60)) {
         setTimeout(() => {
           const n = reactionNode(kind);
           n.style.left = `${5 + Math.random() * 88}vw`;
@@ -211,7 +218,7 @@ function start() {
     // Add or drop the player on the board straight away rather than at the next question's end.
     if (!d.pid) return;
     board = board.filter((x) => x.pid !== d.pid);
-    if (!d.left && board.length < 10) board.push({ pid: d.pid, name: d.name, score: 0 });
+    if (!d.left && board.length < 10) board.push({ pid: d.pid, name: d.name, score: 0, reactions: 0 });
     board.forEach((x, i) => { x.rank = i + 1; });
     renderBoard($('board'), board, null, d.left ? null : d.pid);
   });

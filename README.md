@@ -29,6 +29,8 @@ Every game key carries the `{game}` hash tag, so they share one cluster slot. Jo
 | `{game}:leaderboard` | zset | pid → total points, set outright from the per-question points when each question ends |
 | `{game}:round` | hash | current question `n`, `start`, `qi` |
 | `{game}:active` | string | `SET NX PX` lock so a question can't be restarted mid-play |
+| `{game}:reactions` | stream | emoji reactions (`kind`, `pid`), read by host screens once a second |
+| `{game}:reaction-counts` | hash | pid → emoji sent, incremented in the same `MULTI` as the reaction's `XADD` |
 | `{game}:events` | stream | round / guess / players / reset events fanned out to every task |
 | `{game}:round:<n>:answers` | hash | pid → `choice:elapsedMs`. A Lua script does `HSETNX` and the guess `XADD` atomically, so lock-in is first-write-wins |
 | `{game}:round:<n>:points` | hash | pid → points, derived from the answers when the question ends |
@@ -37,7 +39,7 @@ Every game key carries the `{game}` hash tag, so they share one cluster slot. Jo
 | `valkey:commands` | stream | every command executed, capped at ~5000 |
 | `monitor:leader` | string | 10s lease. Only the holder runs `MONITOR`, so entries aren't duplicated per task |
 
-Every write is either guarded (`NX`, `HSETNX`, a lock) or absolute (`HSET`, `ZADD`, `DEL`), so a client resend after a reconnect can't double-apply. There is no `INCR` or `ZINCRBY`. Points are never written mid-question, so the projected command stream doesn't show who answered correctly. Commands that touch `valkey:commands` are left out of the stream. Otherwise each entry would produce another one.
+Every write is either guarded (`NX`, `HSETNX`, a lock) or absolute (`HSET`, `ZADD`, `DEL`), so a client resend after a reconnect can't double-apply. There is no `INCR` or `ZINCRBY`. The one increment is the emoji count, which counts events and moves in the same transaction as the event it counts. Points are never written mid-question, so the projected command stream doesn't show who answered correctly. Commands that touch `valkey:commands` are left out of the stream. Otherwise each entry would produce another one.
 
 ## Run locally in containers
 

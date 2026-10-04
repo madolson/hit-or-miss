@@ -88,7 +88,9 @@ function renderBoard(ul, top, myPid, fresh) {
   ul.textContent = '';
   for (const e of top) {
     const li = el('li', e.pid === fresh ? 'fresh' : null);
-    li.append(el('span', null, `${e.rank}. ${e.name}${e.pid === myPid ? ' (you)' : ''}`), el('span', null, e.score));
+    const right = el('span', null, e.score);
+    if (e.reactions) right.prepend(el('span', 'sent', `${e.reactions} emoji`));
+    li.append(el('span', null, `${e.rank}. ${e.name}${e.pid === myPid ? ' (you)' : ''}`), right);
     ul.append(li);
   }
 }

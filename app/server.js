@@ -19,6 +19,7 @@ const K = {
   active: '{game}:active',       // lock held while a question runs
   events: '{game}:events',       // stream fanned out to every server
   reactions: '{game}:reactions', // stream of emoji reactions, read by host screens once a second
+  reactCounts: '{game}:reaction-counts', // hash pid -> reactions sent
   answers: (n) => `{game}:round:${n}:answers`, // hash pid -> "choice:elapsedMs"
   points: (n) => `{game}:round:${n}:points`,   // hash pid -> points, written when the question ends
   questions: '{questions}',      // list of JSON questions
@@ -87,8 +88,8 @@ async function guesses(n) {
 async function leaderboard() {
   const flat = await db.zrevrange(K.board, 0, -1, 'WITHSCORES');
   const pids = flat.filter((_, i) => i % 2 === 0);
-  const nm = await names(pids);
-  return pids.map((pid, i) => ({ pid, name: nm[pid], score: Number(flat[i * 2 + 1]), rank: i + 1 }));
+  const [nm, sent] = await Promise.all([names(pids), pids.length ? db.hmget(K.reactCounts, ...pids) : []]);
+  return pids.map((pid, i) => ({ pid, name: nm[pid], score: Number(flat[i * 2 + 1]), rank: i + 1, reactions: Number(sent[i] ?? 0) }));
 }
 
 // ---- Server-sent events to browsers connected to this process ----
@@ -292,7 +293,7 @@ async function join(pid, body) {
 
 async function leave(pid) {
   if (pid) {
-    const [, , [, count]] = await db.multi().hdel(K.players, pid).zrem(K.board, pid).hlen(K.players).exec();
+    const [, , , [, count]] = await db.multi().hdel(K.players, pid).zrem(K.board, pid).hdel(K.reactCounts, pid).hlen(K.players).exec();
     await db.xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'players', 'count', count, 'pid', pid, 'left', 1);
   }
   return [200, { ok: true }, 'pid=; Path=/; Max-Age=0'];
@@ -320,8 +321,12 @@ const REACTIONS = ['heart', 'thumbs', 'rocket', 'valkey'];
 async function react(pid, body) {
   if (!pid) return [401, { error: 'join first' }];
   if (!REACTIONS.includes(body.kind)) return [400, { error: 'bad reaction' }];
-  // Append-only: a resent XADD only adds one more emoji to the screen.
-  await db.xadd(K.reactions, 'MAXLEN', '~', 1000, '*', 'kind', body.kind);
+  // A count of events, so it has to increment. It moves with the XADD in one transaction:
+  // a resend adds one emoji and one to the count, and the two never disagree.
+  await db.multi()
+    .xadd(K.reactions, 'MAXLEN', '~', 1000, '*', 'kind', body.kind, 'pid', pid)
+    .hincrby(K.reactCounts, pid, 1)
+    .exec();
   return [200, { ok: true }];
 }
 
@@ -329,11 +334,11 @@ async function react(pid, body) {
 async function reactions(after) {
   if (!after) {
     const [last] = await db.xrevrange(K.reactions, '+', '-', 'COUNT', 1);
-    return [200, { last: last?.[0] ?? '0-0', kinds: [] }];
+    return [200, { last: last?.[0] ?? '0-0', items: [] }];
   }
   if (!/^\d+-\d+$/.test(after)) return [400, { error: 'bad id' }];
   const entries = await db.xrange(K.reactions, `(${after}`, '+', 'COUNT', 200);
-  return [200, { last: entries.at(-1)?.[0] ?? after, kinds: entries.map(([, f]) => fields(f).kind) }];
+  return [200, { last: entries.at(-1)?.[0] ?? after, items: entries.map(([, f]) => fields(f)) }];
 }
 
 const DENIED = [403, { error: 'bad host key' }];
@@ -359,7 +364,7 @@ async function next() {
 
 async function reset() {
   const n = Number((await db.hget(K.round, 'n')) ?? 0);
-  const keys = [K.players, K.board, K.round, K.active, K.reactions];
+  const keys = [K.players, K.board, K.round, K.active, K.reactions, K.reactCounts];
   for (let i = 1; i <= n; i++) keys.push(K.answers(i), K.points(i));
   // All {game} keys share a slot, so one DEL removes every player and score atomically.
   await db.multi().del(...keys).xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'reset').exec();

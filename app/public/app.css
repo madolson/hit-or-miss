@@ -1,6 +1,9 @@
 * { box-sizing: border-box; }
 body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #0f1630; color: #eef1ff; }
 h1, h2, h3 { margin: 0 0 .5em; }
+/* No double-tap zoom on iPhone when buttons are tapped quickly. Pinch zoom still works. */
+button { touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.board .sent { color: #9aa4d1; font-size: .85em; margin-right: 1.2em; }
 button { font: inherit; border: 0; border-radius: 10px; padding: .8em 1.2em; cursor: pointer; background: #6983ff; color: #fff; font-weight: 600; }
 button:disabled { opacity: .5; cursor: default; }
 button.ghost { background: transparent; border: 1px solid #3a4470; color: #9aa4d1; padding: .4em .8em; font-weight: 400; }

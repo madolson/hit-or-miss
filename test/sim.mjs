@@ -71,9 +71,11 @@ assert.equal((await bob.req('/api/react', { kind: 'heart' }))[0], 200);
 assert.equal((await bob.req('/api/react', { kind: 'valkey' }))[0], 200);
 assert.equal((await bob.req('/api/react', { kind: 'nope' }))[0], 400);
 const [, got] = await host.req(`/api/reactions?after=${start0.last}`);
-assert.deepEqual(got.kinds, ['heart', 'valkey']);
+assert.deepEqual(got.items.map((x) => x.kind), ['heart', 'valkey']);
+const [, bobState] = await bob.req('/api/state');
+assert.equal(bobState.me.reactions, 2, 'leaderboard counts bob\'s emoji');
 const [, again0] = await host.req(`/api/reactions?after=${got.last}`);
-assert.deepEqual(again0.kinds, [], 'nothing new since the last id');
+assert.deepEqual(again0.items, [], 'nothing new since the last id');
 
 async function startRound() {
   const [code, nx] = await hostReq('/api/host/next');
