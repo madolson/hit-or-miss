@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Valkey Race</title>
+<title>Hit or Miss</title>
 <link rel="stylesheet" href="/app.css">
 <style>
   main { max-width: 560px; margin: 0 auto; padding: 1em; }
@@ -17,7 +17,7 @@
 <main>
   <header>
     <img src="/valkey-logo.svg" alt="">
-    <strong id="me-name">Valkey Race</strong>
+    <strong id="me-name">Hit or Miss</strong>
     <span class="score" id="me-score"></span>
     <button id="leave" class="ghost hidden">Leave</button>
   </header>
@@ -56,7 +56,7 @@ async function api(path, body) {
 }
 
 function renderMe() {
-  $('me-name').textContent = me ? me.name : 'Valkey Race';
+  $('me-name').textContent = me ? me.name : 'Hit or Miss';
   $('me-score').textContent = me && me.score != null ? `${me.score} pts${me.rank ? ` · #${me.rank}` : ''}` : '';
   show('leave', !!me);
 }

@@ -3,14 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Valkey Race · Host</title>
+<title>Hit or Miss · Host</title>
 <link rel="stylesheet" href="/app.css">
 <style>
   body { height: 100vh; overflow: hidden; }
   .layout { display: grid; grid-template-columns: 340px 1fr 420px; gap: 1em; padding: 1em; height: 100%; }
   .layout.admin-hidden { grid-template-columns: 1fr 420px; }
   .layout.admin-hidden #admin-col { display: none; }
-  #show-admin { position: fixed; left: .5em; bottom: .5em; z-index: 3; }
+  /* One toggle, fixed at the admin card's top-left, so it stays put when the column hides. */
+  #admin-toggle { position: fixed; top: 2.2em; left: 2.2em; z-index: 3; }
+  .layout.admin-hidden { padding-top: 4.6em; }
   .col { display: flex; flex-direction: column; gap: 1em; min-height: 0; }
   /* The middle column must fit the screen: the round keeps its size, the leaderboard gives way. */
   .center { position: relative; overflow: hidden; }
@@ -18,6 +20,8 @@
   .board-card { flex: 1; min-height: 0; overflow: hidden; }
   #questions { position: absolute; inset: 0; z-index: 2; overflow: auto; box-shadow: 0 0 0 100vmax #0008; }
   .admin-head { display: flex; justify-content: flex-end; margin-bottom: .5em; }
+  .admin-spacer { height: 2.6em; }
+  .idle-head { display: flex; justify-content: space-between; align-items: start; gap: 1em; }
   #qr { width: 100%; border-radius: 10px; }
   #join-url { word-break: break-all; font-size: .9em; }
   #q { font-size: clamp(1.3em, 2.3vw, 2.2em); }
@@ -34,7 +38,7 @@
 </head>
 <body>
 <form id="login" class="card hidden">
-  <h2>Valkey Race · Host</h2>
+  <h2>Hit or Miss · Host</h2>
   <input id="key" type="password" placeholder="Admin code" autofocus>
   <button>Start hosting</button>
   <p id="login-status" class="muted"></p>
@@ -43,7 +47,7 @@
 <div id="app" class="layout hidden">
   <div class="col" id="admin-col">
     <div class="card">
-      <div class="admin-head"><button id="hide-admin" class="ghost">Hide ◀</button></div>
+      <div class="admin-spacer"></div>
       <canvas id="qr"></canvas>
       <p>Scan to join<br><span id="join-url" class="muted"></span></p>
       <p><strong id="players">0</strong> players</p>
@@ -66,7 +70,7 @@
       <ol class="qlist" id="qlist"></ol>
     </div>
     <div id="idle" class="card">
-      <h1>Valkey Race</h1>
+      <div class="idle-head"><h1>Hit or Miss</h1><button id="rules-toggle" class="ghost">Hide instructions</button></div>
       <p class="rules">Each question runs 30 seconds. Lock in during the first 20 seconds for full points, while nobody can see anyone else's answer. In the last 10 seconds everyone's guesses appear and the points drop to zero. Wrong answers score nothing, and you get one answer per question.</p>
     </div>
     <div id="round" class="hidden">
@@ -90,7 +94,7 @@
     </div>
   </div>
 </div>
-<button id="show-admin" class="ghost hidden">Admin ▶</button>
+<button id="admin-toggle" class="ghost hidden">Hide ◀</button>
 <script src="/qrcode.js"></script>
 <script src="/qr.js"></script>
 <script src="/game.js"></script>
@@ -141,7 +145,9 @@ async function load() {
 function start() {
   show('login', false);
   show('app', true);
+  show('admin-toggle', true);
   setAdminHidden(!!localStorage.adminHidden);
+  setRulesHidden(!!localStorage.rulesHidden);
   const joinUrl = `${location.origin}/play`;
   drawQR($('qr'), joinUrl, 600);
   $('join-url').textContent = joinUrl;
@@ -198,10 +204,16 @@ $('close-questions').onclick = () => show('questions', false);
 function setAdminHidden(hidden) {
   localStorage.adminHidden = hidden ? '1' : '';
   $('app').classList.toggle('admin-hidden', hidden);
-  show('show-admin', hidden && !$('app').classList.contains('hidden'));
+  $('admin-toggle').textContent = hidden ? 'Admin ▶' : 'Hide ◀';
 }
-$('hide-admin').onclick = () => setAdminHidden(true);
-$('show-admin').onclick = () => setAdminHidden(false);
+$('admin-toggle').onclick = () => setAdminHidden(!localStorage.adminHidden);
+
+function setRulesHidden(hidden) {
+  localStorage.rulesHidden = hidden ? '1' : '';
+  $('idle').querySelector('.rules').classList.toggle('hidden', hidden);
+  $('rules-toggle').textContent = hidden ? 'Show instructions' : 'Hide instructions';
+}
+$('rules-toggle').onclick = () => setRulesHidden(!localStorage.rulesHidden);
 
 $('logout').onclick = () => {
   delete localStorage.hostKey;

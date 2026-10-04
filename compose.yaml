@@ -1,0 +1,30 @@
+# Local version: one cluster-mode Valkey node (the app uses a cluster client) and the app.
+#   HOST_KEY=dev docker compose up --build    then open http://localhost:8080/host
+services:
+  valkey:
+    image: valkey/valkey:9.0
+    command:
+      - sh
+      - -c
+      - |
+        valkey-server --cluster-enabled yes --cluster-announce-hostname valkey \
+          --cluster-preferred-endpoint-type hostname --save '' &
+        until valkey-cli ping >/dev/null 2>&1; do sleep 0.1; done
+        valkey-cli cluster addslotsrange 0 16383 >/dev/null
+        wait
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli cluster info | grep -q cluster_state:ok"]
+      # Fast while starting, then rare, since every check shows up in the command stream.
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+  app:
+    build: ./app
+    environment:
+      VALKEY_HOST: valkey
+      VALKEY_PORT: "6379"
+      HOST_KEY: ${HOST_KEY:-dev}
+    ports: ["8080:8080"]
+    depends_on:
+      valkey:
+        condition: service_healthy

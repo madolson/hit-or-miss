@@ -1,4 +1,4 @@
-# Valkey Race
+# Hit or Miss
 
 A live multiple-choice race. Players scan a Valkey-branded QR code on the host screen, pick a name, and play from their phone. Each question runs 30 seconds: answer blind in the first 20 for the question's full points, then everyone's guesses show and points fall linearly to 0 at 30 seconds. Wrong answers score 0. The host clicks **Next question** to start each one. The first question is a zero-point warm-up.
 
@@ -37,7 +37,15 @@ Round timing uses Valkey `TIME` as the single clock. Each task schedules its own
 
 Commands that touch `valkey:commands` are left out of the stream. Otherwise each entry would produce another one.
 
-## Run locally
+## Run locally in containers
+
+```bash
+HOST_KEY=dev docker compose up --build
+```
+
+Open http://localhost:8080/host and enter `dev`. The QR code encodes whatever address the host page was opened at, so for phones on the same network open the host page at your machine's LAN address instead of `localhost`.
+
+## Run locally without containers
 
 ```bash
 valkey-server --port 6391 --cluster-enabled yes --cluster-announce-ip 127.0.0.1 --save '' &
