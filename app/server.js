@@ -330,15 +330,84 @@ async function react(pid, body) {
   return [200, { ok: true }];
 }
 
-// Host screens call this once a second with the last id they saw.
-async function reactions(after) {
+// Host and trivia screens call this once a second with the last id they saw.
+async function reactions(key, after) {
   if (!after) {
-    const [last] = await db.xrevrange(K.reactions, '+', '-', 'COUNT', 1);
+    const [last] = await db.xrevrange(key, '+', '-', 'COUNT', 1);
     return [200, { last: last?.[0] ?? '0-0', items: [] }];
   }
   if (!/^\d+-\d+$/.test(after)) return [400, { error: 'bad id' }];
-  const entries = await db.xrange(K.reactions, `(${after}`, '+', 'COUNT', 200);
+  const entries = await db.xrange(key, `(${after}`, '+', 'COUNT', 200);
   return [200, { last: entries.at(-1)?.[0] ?? after, items: entries.map(([, f]) => fields(f)) }];
+}
+
+// ---- Trivia: the same questions, self-paced, one attempt per browser ----
+
+const T = {
+  answers: (tid) => `{trivia}:answers:${tid}`, // hash question index -> choice
+  names: '{trivia}:names',                     // hash tid -> name, set on submit
+  board: '{trivia}:leaderboard',               // zset tid -> score, set once on submit
+  reactions: '{trivia}:reactions',             // stream of emoji reactions, read by every trivia page
+};
+
+const tidCookie = (tid) => `tid=${tid}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly`;
+const questionList = async () => (await db.lrange(K.questions, 0, -1)).map((q) => JSON.parse(q));
+const triviaScore = (qs, answers) =>
+  Object.entries(answers).reduce((t, [i, c]) => t + (Number(c) === qs[i]?.answer ? qs[i].points : 0), 0);
+
+async function triviaBoard(tid) {
+  const flat = await db.zrevrange(T.board, 0, 9, 'WITHSCORES');
+  const tids = flat.filter((_, i) => i % 2 === 0);
+  const nm = tids.length ? await db.hmget(T.names, ...tids) : [];
+  // Never send tids: each one is somebody's cookie.
+  return tids.map((t, i) => ({ name: nm[i], score: Number(flat[i * 2 + 1]), rank: i + 1, you: t === tid }));
+}
+
+async function triviaState(tid) {
+  const fresh = !tid;
+  tid ||= crypto.randomUUID();
+  const [qs, answers, rank, name, top] = await Promise.all([
+    questionList(), db.hgetall(T.answers(tid)), db.zrevrank(T.board, tid), db.hget(T.names, tid), triviaBoard(tid)]);
+  const n = Object.keys(answers).length;
+  const q = qs[n];
+  return [200, {
+    n, total: qs.length, score: triviaScore(qs, answers),
+    max: qs.reduce((t, x) => t + (x.answer === null ? 0 : x.points), 0),
+    question: q ? { q: q.q, options: q.options, points: q.points } : null,
+    submitted: rank === null ? null : { name, rank: rank + 1 },
+    top,
+  }, fresh && tidCookie(tid)];
+}
+
+async function triviaAnswer(tid, body) {
+  if (!tid) return [401, { error: 'load the page first' }];
+  const i = Number(body.i);
+  const choice = Number(body.choice);
+  const [qs, n] = await Promise.all([questionList(), db.hlen(T.answers(tid))]);
+  if (i !== n || !qs[i]) return [409, { error: 'not the current question' }];
+  if (!Number.isInteger(choice) || choice < 0 || choice >= qs[i].options.length) return [400, { error: 'bad choice' }];
+  // HSETNX: the first answer to a question sticks, so a resend or a second tab changes nothing.
+  await db.hsetnx(T.answers(tid), i, choice);
+  const answers = await db.hgetall(T.answers(tid));
+  return [200, { choice: Number(answers[i]), correct: qs[i].answer, score: triviaScore(qs, answers) }];
+}
+
+async function triviaSubmit(tid, body) {
+  const name = String(body.name ?? '').trim().slice(0, 20);
+  if (!name) return [400, { error: 'name required' }];
+  const [qs, answers] = tid ? await Promise.all([questionList(), db.hgetall(T.answers(tid))]) : [[], {}];
+  if (!tid || Object.keys(answers).length < qs.length) return [409, { error: 'finish the questions first' }];
+  // ZADD NX keeps the first submission. Same hash tag, so the name goes in with it atomically.
+  const [[, added]] = await db.multi().zadd(T.board, 'NX', triviaScore(qs, answers), tid).hsetnx(T.names, tid, name).exec();
+  if (!added) return [409, { error: 'already submitted' }];
+  return [200, { ok: true }];
+}
+
+async function triviaReact(tid, body) {
+  if (!tid) return [401, { error: 'load the page first' }];
+  if (!REACTIONS.includes(body.kind)) return [400, { error: 'bad reaction' }];
+  await db.xadd(T.reactions, 'MAXLEN', '~', 1000, '*', 'kind', body.kind);
+  return [200, { ok: true }];
 }
 
 const DENIED = [403, { error: 'bad host key' }];
@@ -378,10 +447,10 @@ async function questions() {
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 const PUBLIC = path.join(import.meta.dirname, 'public');
 const files = Object.fromEntries(fs.readdirSync(PUBLIC).map((f) => [f, fs.readFileSync(path.join(PUBLIC, f))]));
-const PAGES = { '/play': 'play.html', '/host': 'host.html', '/commands': 'commands.html', '/how': 'how.html' };
+const PAGES = { '/play': 'play.html', '/host': 'host.html', '/commands': 'commands.html', '/how': 'how.html', '/trivia': 'trivia.html' };
 
-function cookiePid(req) {
-  const m = /(?:^|;\s*)pid=([0-9a-f-]{36})/.exec(req.headers.cookie ?? '');
+function cookieId(req, name) {
+  const m = new RegExp(`(?:^|;\\s*)${name}=([0-9a-f-]{36})`).exec(req.headers.cookie ?? '');
   return m?.[1];
 }
 
@@ -402,7 +471,8 @@ function json(res, status, body, cookie) {
 
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
-  const pid = cookiePid(req);
+  const pid = cookieId(req, 'pid');
+  const tid = cookieId(req, 'tid');
   const route = `${req.method} ${url.pathname}`;
 
   if (route === 'GET /healthz') return res.writeHead(200).end('ok');
@@ -428,7 +498,13 @@ async function handle(req, res) {
   if (route === 'POST /api/answer') return json(res, ...(await answer(pid, await readJson(req))));
   if (route === 'POST /api/leave') return json(res, ...(await leave(pid)));
   if (route === 'POST /api/react') return json(res, ...(await react(pid, await readJson(req))));
-  if (route === 'GET /api/reactions') return json(res, ...(await reactions(url.searchParams.get('after'))));
+  if (route === 'GET /api/reactions') return json(res, ...(await reactions(K.reactions, url.searchParams.get('after'))));
+
+  if (route === 'GET /api/trivia/state') return json(res, ...(await triviaState(tid)));
+  if (route === 'POST /api/trivia/answer') return json(res, ...(await triviaAnswer(tid, await readJson(req))));
+  if (route === 'POST /api/trivia/submit') return json(res, ...(await triviaSubmit(tid, await readJson(req))));
+  if (route === 'POST /api/trivia/react') return json(res, ...(await triviaReact(tid, await readJson(req))));
+  if (route === 'GET /api/trivia/reactions') return json(res, ...(await reactions(T.reactions, url.searchParams.get('after'))));
 
   if (url.pathname.startsWith('/api/host/')) {
     if (req.headers['x-host-key'] !== HOST_KEY) return json(res, ...DENIED);

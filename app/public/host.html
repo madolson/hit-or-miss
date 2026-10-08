@@ -42,10 +42,6 @@
   .qlist { margin: 0; padding-left: 1.4em; }
   .qlist li { margin-bottom: .8em; }
   .qlist .right { color: #2fd18b; font-weight: 700; }
-  #reactions { position: fixed; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
-  #reactions > * { position: absolute; font-size: 3em; animation: float 2.6s ease-out forwards; }
-  #reactions img { width: 1em; height: 1.15em; }
-  @keyframes float { 0% { opacity: 0; transform: translateY(20px) scale(.6); } 15% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-160px) scale(1.1); } }
 </style>
 </head>
 <body>
@@ -149,15 +145,7 @@ async function pollReactions() {
         if (e) { e.reactions = (e.reactions ?? 0) + 1; changed = true; }
       }
       if (changed) renderBoard($('board'), board);
-      for (const { kind } of r.items.slice(0, 60)) {
-        setTimeout(() => {
-          const n = reactionNode(kind);
-          n.style.left = `${5 + Math.random() * 88}vw`;
-          n.style.top = `${15 + Math.random() * 70}vh`;
-          n.addEventListener('animationend', () => n.remove());
-          $('reactions').append(n);
-        }, Math.random() * 1000);
-      }
+      floatReactions($('reactions'), r.items);
     } catch {}
     await new Promise((r) => setTimeout(r, 1000));
   }

@@ -35,6 +35,11 @@ input { font: inherit; padding: .8em; border-radius: 10px; border: 1px solid #3a
 @keyframes fresh { from { opacity: 0; transform: translateY(-8px); background: #6983ff44; } to { opacity: 1; transform: none; background: transparent; } }
 .board li { display: flex; justify-content: space-between; padding: .35em 0; border-bottom: 1px solid #2a3466; font-variant-numeric: tabular-nums; }
 
+#reactions { position: fixed; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
+#reactions > * { position: absolute; font-size: 3em; animation: float 2.6s ease-out forwards; }
+#reactions img { width: 1em; height: 1.15em; }
+@keyframes float { 0% { opacity: 0; transform: translateY(20px) scale(.6); } 15% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-160px) scale(1.1); } }
+
 .cmds { font: 12px/1.45 ui-monospace, Menlo, monospace; overflow: hidden; }
 .cmds div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cmds .c { color: #ffcf5c; font-weight: 700; }

@@ -84,6 +84,19 @@ function reactionNode(kind) {
   return img;
 }
 
+// Scatter a second's reactions across the screen at random places and moments.
+function floatReactions(box, items) {
+  for (const { kind } of items.slice(0, 60)) {
+    setTimeout(() => {
+      const n = reactionNode(kind);
+      n.style.left = `${5 + Math.random() * 88}vw`;
+      n.style.top = `${15 + Math.random() * 70}vh`;
+      n.addEventListener('animationend', () => n.remove());
+      box.append(n);
+    }, Math.random() * 1000);
+  }
+}
+
 function renderBoard(ul, top, myPid, fresh) {
   ul.textContent = '';
   for (const e of top) {

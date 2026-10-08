@@ -10,6 +10,7 @@ All state lives in Valkey. Every command Valkey executes, captured with `MONITOR
 |---|---|
 | `/play` | Players (the QR target). The `pid` cookie keeps a player's identity and score across rounds and reloads. **Leave** removes the player. |
 | `/host` | Big screen. Asks for the admin code before showing the QR code (voxel hexagon mask). The admin panel drops down from the top bar over the game. Next question, Questions (lists questions and answers from Valkey), Reset game (clears players, scores and rounds), Log out. |
+| `/trivia` | Self-paced version of the same questions. The server grades each answer, so answers never reach the browser before you pick. The first answer to each question sticks. At the end you can submit your score with a name, once. The `tid` cookie is the one attempt, so clearing cookies is the only way to retry. Emoji reactions float across every open trivia page. |
 | `/commands` | Command stream and commands/s gauge only. |
 | `/how` | One card per use case with the Valkey commands that implement it. |
 
@@ -34,6 +35,10 @@ Every game key carries the `{game}` hash tag, so they share one cluster slot. Jo
 | `{game}:events` | stream | round / guess / players / reset events fanned out to every task |
 | `{game}:round:<n>:answers` | hash | pid → `choice:elapsedMs`. A Lua script does `HSETNX` and the guess `XADD` atomically, so lock-in is first-write-wins |
 | `{game}:round:<n>:points` | hash | pid → points, derived from the answers when the question ends |
+| `{trivia}:answers:<tid>` | hash | question index → choice, `HSETNX` so the first answer sticks |
+| `{trivia}:leaderboard` | zset | tid → score, `ZADD NX` so a score is submitted once |
+| `{trivia}:names` | hash | tid → name, set in the same `MULTI` as the score |
+| `{trivia}:reactions` | stream | trivia emoji reactions (`kind`), read by every trivia page once a second |
 | `{questions}` | list | question bank (`q`, `options`, `answer` or null, `points`), loaded from `app/questions.json` whenever its hash changes |
 | `{questions}:version` | string | that hash |
 | `valkey:commands` | stream | every command executed, capped at ~5000 |
@@ -57,6 +62,7 @@ valkey-cli -p 6391 cluster addslotsrange 0 16383
 cd app && npm ci
 VALKEY_PORT=6391 HOST_KEY=dev node server.js        # http://localhost:8080/host
 node ../test/sim.mjs dev http://localhost:8080       # end-to-end check, ~16s
+node ../test/trivia.mjs http://localhost:8080        # trivia check
 ```
 
 `test/sim.mjs` takes several base URLs and spreads players across them. Run two servers on different `PORT`s to check that state is shared.

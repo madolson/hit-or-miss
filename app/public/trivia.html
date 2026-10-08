@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hit or Miss · Trivia</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  main { max-width: 560px; margin: 0 auto; padding: 1em; }
+  header { display: flex; align-items: center; gap: .6em; margin-bottom: 1em; }
+  header img { height: 32px; }
+  header .score { margin-left: auto; font-variant-numeric: tabular-nums; }
+  #next { width: 100%; margin-top: 1em; }
+  #submit-form { display: flex; flex-direction: column; gap: .7em; margin-bottom: 1em; }
+  .react { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6em; margin-top: 1em; }
+  .react button { background: #18214a; border: 1px solid #3a4470; font-size: 1.8em; padding: .4em 0; line-height: 1; }
+  .react button:active { transform: scale(.92); }
+  .react img { height: 1em; vertical-align: middle; }
+  .links { margin-top: 1.5em; text-align: center; color: #9aa4d1; }
+  .links a { color: #9aa4d1; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="/valkey-logo.svg" alt="">
+    <strong>Hit or Miss · Trivia</strong>
+    <span class="score" id="score"></span>
+  </header>
+
+  <section id="quiz" class="hidden">
+    <p class="muted" id="worth"></p>
+    <h2 id="q"></h2>
+    <div class="options" id="options"></div>
+    <p id="status" class="muted"></p>
+    <button id="next" class="hidden"></button>
+  </section>
+
+  <section id="done" class="card hidden">
+    <h2 id="final"></h2>
+    <form id="submit-form">
+      <input id="name" maxlength="20" placeholder="Your name" autocomplete="nickname" required>
+      <button>Submit score</button>
+    </form>
+    <p id="submitted" class="muted"></p>
+    <h3>Leaderboard</h3>
+    <ul class="board" id="board"></ul>
+  </section>
+
+  <div class="react">
+    <button data-kind="heart" aria-label="Heart">❤️</button>
+    <button data-kind="thumbs" aria-label="Thumbs up">👍</button>
+    <button data-kind="rocket" aria-label="Rocket">🚀</button>
+    <button data-kind="valkey" aria-label="Valkey"><img src="/valkey-logo.svg" alt=""></button>
+  </div>
+  <footer class="links"><a href="/how">How it works</a> · <a href="https://github.com/madolson/hit-or-miss">Code</a></footer>
+</main>
+<div id="reactions"></div>
+<script src="/game.js"></script>
+<script>
+let s = null;     // state from the server
+let shown = null; // the question just answered, kept on screen until Next: { q, n, choice, correct }
+
+async function api(path, body) {
+  const res = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
+  return [res.status, await res.json()];
+}
+
+function renderQuestion(q, n, choice, correct) {
+  $('worth').textContent = `Question ${n + 1} of ${s.total}${q.points ? ` · ${q.points} pts` : ''}`;
+  $('q').textContent = q.q;
+  const box = $('options');
+  box.textContent = '';
+  q.options.forEach((text, i) => {
+    const b = el('button', 'opt', text);
+    if (choice === i) b.classList.add('chosen');
+    if (choice !== null && correct !== null) b.classList.add(i === correct ? 'right' : 'wrong');
+    b.disabled = choice !== null;
+    b.onclick = () => pick(i);
+    box.append(b);
+  });
+  $('status').textContent = choice === null || correct === null ? '' : choice === correct ? `+${q.points}` : 'Wrong';
+}
+
+function render() {
+  $('score').textContent = `${s.score} pts`;
+  const q = shown?.q ?? s.question;
+  show('quiz', !!q);
+  show('done', !q);
+  show('next', !!shown);
+  if (shown) {
+    renderQuestion(shown.q, shown.n, shown.choice, shown.correct);
+    $('next').textContent = s.question ? 'Next question' : 'See your score';
+  } else if (q) {
+    renderQuestion(q, s.n, null, null);
+  } else {
+    $('final').textContent = `You scored ${s.score} of ${s.max}`;
+    show('submit-form', !s.submitted);
+    $('submitted').textContent = s.submitted ? `Submitted as ${s.submitted.name}. You're #${s.submitted.rank}.` : '';
+    const ul = $('board');
+    ul.textContent = '';
+    for (const e of s.top) {
+      const li = el('li');
+      li.append(el('span', null, `${e.rank}. ${e.name}${e.you ? ' (you)' : ''}`), el('span', null, e.score));
+      ul.append(li);
+    }
+  }
+}
+
+async function load() {
+  [, s] = await api('/api/trivia/state');
+  render();
+}
+
+async function pick(choice) {
+  const q = s.question;
+  const n = s.n;
+  const [code, body] = await api('/api/trivia/answer', { i: n, choice });
+  if (code === 200) shown = { q, n, choice: body.choice, correct: body.correct };
+  await load();
+}
+
+$('next').onclick = () => { shown = null; render(); };
+
+$('submit-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const [code, body] = await api('/api/trivia/submit', { name: $('name').value });
+  if (code !== 200) alert(body.error);
+  await load();
+};
+
+// Each press is one XADD; a short cooldown keeps one phone from flooding everyone's screen.
+let lastReact = 0;
+document.querySelectorAll('.react button').forEach((b) => {
+  b.onclick = () => {
+    if (Date.now() - lastReact < 300) return;
+    lastReact = Date.now();
+    api('/api/trivia/react', { kind: b.dataset.kind });
+  };
+});
+
+// Everyone's reactions, including your own, float across every trivia page.
+async function pollReactions() {
+  let after = '';
+  for (;;) {
+    try {
+      const r = await (await fetch(`/api/trivia/reactions${after ? `?after=${after}` : ''}`)).json();
+      after = r.last;
+      floatReactions($('reactions'), r.items);
+    } catch {}
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
+load().then(pollReactions);
+</script>
+</body>
+</html>
