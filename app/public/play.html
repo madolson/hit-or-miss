@@ -46,6 +46,7 @@
     <div class="bar"><div id="bar"></div></div>
     <div class="options" id="options"></div>
     <p id="status" class="muted"></p>
+    <p id="explain"></p>
   </section>
   <div class="react hidden" id="react">
     <button data-kind="heart" aria-label="Heart">❤️</button>
@@ -95,6 +96,7 @@ function render() {
   $('q').textContent = round.q;
   renderOptions($('options'), round, pick);
   $('status').textContent = statusText();
+  $('explain').textContent = round.ended ? round.explain ?? '' : '';
 }
 
 async function pick(choice) {

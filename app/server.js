@@ -152,7 +152,7 @@ async function endRound(r) {
   const top = board.slice(0, 10);
   for (const c of clients) {
     send(c, 'end', {
-      n: r.n, correct: q.answer, top, final: r.n === total,
+      n: r.n, correct: q.answer, explain: q.explain, top, final: r.n === total,
       me: c.pid ? { points: Number(pts[c.pid] ?? 0), answered: c.pid in pts, ...byPid[c.pid] } : null,
     });
   }
@@ -272,6 +272,7 @@ async function state(pid) {
     if (elapsed >= ROUND_MS) {
       out.round.ended = true;
       out.round.correct = q.answer;
+      out.round.explain = q.explain;
       if (pid && me) {
         const p = await db.hget(K.points(r.n), pid);
         out.round.me = { points: Number(p ?? 0), answered: p !== null, ...me };
@@ -356,7 +357,7 @@ const triviaScore = (qs, answers) =>
   Object.entries(answers).reduce((t, [i, c]) => t + (Number(c) === qs[i]?.answer ? qs[i].points : 0), 0);
 
 async function triviaBoard(tid) {
-  const flat = await db.zrevrange(T.board, 0, 9, 'WITHSCORES');
+  const flat = await db.zrevrange(T.board, 0, -1, 'WITHSCORES');
   const tids = flat.filter((_, i) => i % 2 === 0);
   const nm = tids.length ? await db.hmget(T.names, ...tids) : [];
   // Never send tids: each one is somebody's cookie.
@@ -366,15 +367,19 @@ async function triviaBoard(tid) {
 async function triviaState(tid) {
   const fresh = !tid;
   tid ||= crypto.randomUUID();
-  const [qs, answers, rank, name, top] = await Promise.all([
-    questionList(), db.hgetall(T.answers(tid)), db.zrevrank(T.board, tid), db.hget(T.names, tid), triviaBoard(tid)]);
+  const [qs, answers, rank, name] = await Promise.all([
+    questionList(), db.hgetall(T.answers(tid)), db.zrevrank(T.board, tid), db.hget(T.names, tid)]);
   const n = Object.keys(answers).length;
   const q = qs[n];
+  // The whole board, but only once you've finished: it's the results page.
+  const top = q ? [] : await triviaBoard(tid);
   return [200, {
     n, total: qs.length, score: triviaScore(qs, answers),
     max: qs.reduce((t, x) => t + (x.answer === null ? 0 : x.points), 0),
     question: q ? { q: q.q, options: q.options, points: q.points } : null,
     submitted: rank === null ? null : { name, rank: rank + 1 },
+    // Per question, for the share card: true right, false wrong, null no right answer.
+    results: q ? [] : qs.map((x, i) => (x.answer === null ? null : Number(answers[i]) === x.answer)),
     top,
   }, fresh && tidCookie(tid)];
 }
@@ -389,7 +394,7 @@ async function triviaAnswer(tid, body) {
   // HSETNX: the first answer to a question sticks, so a resend or a second tab changes nothing.
   await db.hsetnx(T.answers(tid), i, choice);
   const answers = await db.hgetall(T.answers(tid));
-  return [200, { choice: Number(answers[i]), correct: qs[i].answer, score: triviaScore(qs, answers) }];
+  return [200, { choice: Number(answers[i]), correct: qs[i].answer, explain: qs[i].explain, score: triviaScore(qs, answers) }];
 }
 
 async function triviaSubmit(tid, body) {
@@ -437,6 +442,15 @@ async function reset() {
   for (let i = 1; i <= n; i++) keys.push(K.answers(i), K.points(i));
   // All {game} keys share a slot, so one DEL removes every player and score atomically.
   await db.multi().del(...keys).xadd(K.events, 'MAXLEN', '~', 1000, '*', 'type', 'reset').exec();
+  return [200, { ok: true }];
+}
+
+// Drop every trivia score, name, reaction and attempt. Attempts are one key each, so SCAN
+// for them on the one shard's primary. They share a slot, so each batch is one DEL.
+async function resetTrivia() {
+  await db.del(T.board, T.names, T.reactions);
+  const stream = primaryOf(db).scanStream({ match: T.answers('*'), count: 1000 });
+  for await (const keys of stream) if (keys.length) await db.del(...keys);
   return [200, { ok: true }];
 }
 
@@ -512,6 +526,7 @@ async function handle(req, res) {
     if (route === 'GET /api/host/questions') return json(res, ...(await questions()));
     if (route === 'POST /api/host/next') return json(res, ...(await next()));
     if (route === 'POST /api/host/reset') return json(res, ...(await reset()));
+    if (route === 'POST /api/host/reset-trivia') return json(res, ...(await resetTrivia()));
   }
 
   res.writeHead(404).end('not found');

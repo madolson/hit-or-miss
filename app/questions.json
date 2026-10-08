@@ -1,14 +1,14 @@
 [
-  {"q": "Warm-up: have you used Valkey before?", "options": ["Yes, in production", "Yes, for side projects", "Not yet", "What's Valkey?"], "answer": null, "points": 0},
-  {"q": "How many unique people have contributed code to Valkey across all its releases?", "options": ["About 280", "About 160", "About 450", "About 650"], "answer": 0, "points": 1000},
-  {"q": "How many people have participated in valkey-io/valkey on GitHub by opening, commenting on, or reviewing an issue or PR?", "options": ["About 350", "About 550", "About 1,600", "About 950"], "answer": 3, "points": 1500},
-  {"q": "How many GitHub stars does valkey-io/valkey have?", "options": ["About 12,000", "About 18,000", "About 27,000", "About 42,000"], "answer": 2, "points": 2000},
-  {"q": "Which is a real Valkey command?", "options": ["BRPOPRPUSH", "BRPOPLPUSH", "BLPOPRPUSH", "BLPOPLPUSH"], "answer": 1, "points": 1000},
-  {"q": "What's special about port 6379?", "options": ["Antirez's birthday", "Spells MERZ on a phone keypad", "First free port above 6000", "Random"], "answer": 1, "points": 1000},
-  {"q": "What does \"PF\" in PFADD stand for?", "options": ["Probabilistic Filter", "Pretty Fuzzy", "Philippe Flajolet", "Pierre Fermat"], "answer": 2, "points": 1000},
-  {"q": "What was Valkey called before it was Valkey?", "options": ["Radish", "PlaceholderKV", "ValkeyrieDB", "OpenKV"], "answer": 1, "points": 1000},
-  {"q": "Which version did Valkey fork from?", "options": ["7.0.2", "7.2.4", "7.2.5", "7.4.0"], "answer": 1, "points": 1000},
-  {"q": "Which is a real Valkey error?", "options": ["NOCONSENSUS", "BADPRIMARY", "NOTBUSY", "NOLEADER"], "answer": 2, "points": 1000},
-  {"q": "Which are valid LOLWUT versions?", "options": ["5, 6, 7, 9", "6, 7, 9", "5, 6, 7, 8, 9", "5, 6, 9"], "answer": 3, "points": 1000},
-  {"q": "How many characters long must a module data type name be?", "options": ["5", "7", "9", "10"], "answer": 2, "points": 1000}
+  {"q": "Warm-up: have you used Valkey before?", "options": ["Yes, in production", "Yes, for side projects", "Not yet", "What's Valkey?"], "answer": null, "points": 0, "explain": "No wrong answers here, just a check on who's in the room."},
+  {"q": "How many unique people have contributed code to Valkey across all its releases?", "options": ["About 280", "About 160", "About 450", "About 650"], "answer": 0, "points": 1000, "explain": "About 280 people have shipped code in a Valkey release, as of October 2026."},
+  {"q": "How many people have participated in valkey-io/valkey on GitHub by opening, commenting on, or reviewing an issue or PR?", "options": ["About 350", "About 550", "About 1,600", "About 950"], "answer": 3, "points": 1500, "explain": "Around 950 people have opened, commented on, or reviewed an issue or PR in valkey-io/valkey, as of October 2026."},
+  {"q": "How many GitHub stars does valkey-io/valkey have?", "options": ["About 12,000", "About 18,000", "About 27,000", "About 42,000"], "answer": 2, "points": 2000, "explain": "valkey-io/valkey sits at about 27,000 GitHub stars, as of October 2026."},
+  {"q": "Which is a real Valkey command?", "options": ["BRPOPRPUSH", "BRPOPLPUSH", "BLPOPRPUSH", "BLPOPLPUSH"], "answer": 1, "points": 1000, "explain": "It pops from the right of one list and pushes to the left of another, blocking until there's something to pop. BLMOVE has since replaced it."},
+  {"q": "What's special about port 6379?", "options": ["Antirez's birthday", "Spells MERZ on a phone keypad", "First free port above 6000", "Random"], "answer": 1, "points": 1000, "explain": "It spells MERZ on a phone keypad, Salvatore's inside joke for something that looks shallow on the outside but is technically deep."},
+  {"q": "What does \"PF\" in PFADD stand for?", "options": ["Probabilistic Filter", "Pretty Fuzzy", "Philippe Flajolet", "Pierre Fermat"], "answer": 2, "points": 1000, "explain": "PF is for Philippe Flajolet, who invented the HyperLogLog behind every PF command."},
+  {"q": "What was Valkey called before it was Valkey?", "options": ["Radish", "PlaceholderKV", "ValkeyrieDB", "OpenKV"], "answer": 1, "points": 1000, "explain": "At first the fork was literally called PlaceholderKV, because naming things is hard."},
+  {"q": "Which version did Valkey fork from?", "options": ["7.0.2", "7.2.4", "7.2.5", "7.4.0"], "answer": 1, "points": 1000, "explain": "Valkey forked from Redis 7.2.4, the last BSD-licensed release."},
+  {"q": "Which is a real Valkey error?", "options": ["NOCONSENSUS", "BADPRIMARY", "NOTBUSY", "NOLEADER"], "answer": 2, "points": 1000, "explain": "SCRIPT KILL or FUNCTION KILL returns NOTBUSY when no script is running."},
+  {"q": "Which are valid LOLWUT versions?", "options": ["5, 6, 7, 9", "6, 7, 9", "5, 6, 7, 8, 9", "5, 6, 9"], "answer": 3, "points": 1000, "explain": "LOLWUT is a joke command that prints a piece of computer-generated art along with the server version. Versions 5 and 6 came from Redis, and Madelyn added version 9 for Valkey."},
+  {"q": "How many characters long must a module data type name be?", "options": ["5", "7", "9", "10"], "answer": 2, "points": 1000, "explain": "Nine characters at 6 bits each, plus a 10-bit encoding version, fit exactly in a 64-bit type ID in the RDB file."}
 ]

@@ -28,9 +28,9 @@ assert.match(a.cookie, /^tid=/);
 assert.equal(s.n, 0);
 assert.equal(s.total, questions.length);
 assert.equal(s.question.q, questions[0].q);
-assert.ok(!('answer' in s.question), 'the answer is not sent before answering');
+assert.ok(!('answer' in s.question) && !('explain' in s.question), 'the answer is not sent before answering');
 assert.equal(s.submitted, null);
-assert.ok(s.top.every((e) => !('pid' in e) && !('tid' in e)), 'leaderboard leaks no ids');
+assert.deepEqual(s.top, [], 'no leaderboard until you finish');
 
 assert.equal((await a.req('/api/trivia/answer', { i: 1, choice: 0 }))[0], 409, 'skipping ahead');
 assert.equal((await a.req('/api/trivia/submit', { name: 'a' }))[0], 409, 'submit before finishing');
@@ -44,6 +44,7 @@ for (const [i, q] of questions.entries()) {
   const [code, r] = await a.req('/api/trivia/answer', { i, choice });
   assert.equal(code, 200);
   assert.equal(r.correct, q.answer);
+  assert.equal(r.explain, q.explain);
   assert.equal(r.score, expected);
   // A second answer to the same question doesn't change it.
   assert.equal((await a.req('/api/trivia/answer', { i, choice: (choice + 1) % 4 }))[0], 409);
@@ -53,6 +54,8 @@ for (const [i, q] of questions.entries()) {
 assert.equal(s.n, questions.length);
 assert.equal(s.question, null);
 assert.equal(s.score, expected);
+assert.deepEqual(s.results, questions.map((q, i) => (q.answer === null ? null : i % 2 === 0)), 'share card');
+assert.ok(s.top.every((e) => !('pid' in e) && !('tid' in e)), 'leaderboard leaks no ids');
 assert.equal(s.max, questions.reduce((t, q) => t + (q.answer === null ? 0 : q.points), 0));
 
 assert.equal((await a.req('/api/trivia/submit', { name: '  ' }))[0], 400);
@@ -62,7 +65,7 @@ assert.equal((await a.req('/api/trivia/submit', { name: 'again' }))[0], 409, 'on
 [, s] = await a.req('/api/trivia/state');
 assert.equal(s.submitted.name, name);
 assert.ok(s.submitted.rank >= 1);
-if (s.submitted.rank <= 10) assert.ok(s.top.some((e) => e.you && e.name === name && e.score === expected));
+assert.ok(s.top.some((e) => e.you && e.name === name && e.score === expected));
 
 // A visitor with no cookie starts over; one with a's cookie can't.
 [, s] = await b.req('/api/trivia/state');

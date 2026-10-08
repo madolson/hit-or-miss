@@ -11,6 +11,11 @@
   header img { height: 32px; }
   header .score { margin-left: auto; font-variant-numeric: tabular-nums; }
   #next { width: 100%; margin-top: 1em; }
+  #card { font-size: 1.3em; white-space: nowrap; margin: 0 0 .5em; }
+  #share { margin-bottom: 1em; }
+  /* Every submitted score, so the list scrolls inside the card and the share button stays put. */
+  #board { position: relative; max-height: 50vh; overflow-y: auto; }
+  #board li.you { background: #6983ff33; }
   #submit-form { display: flex; flex-direction: column; gap: .7em; margin-bottom: 1em; }
   .react { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6em; margin-top: 1em; }
   .react button { background: #18214a; border: 1px solid #3a4470; font-size: 1.8em; padding: .4em 0; line-height: 1; }
@@ -33,11 +38,14 @@
     <h2 id="q"></h2>
     <div class="options" id="options"></div>
     <p id="status" class="muted"></p>
+    <p id="explain"></p>
     <button id="next" class="hidden"></button>
   </section>
 
   <section id="done" class="card hidden">
     <h2 id="final"></h2>
+    <p id="card"></p>
+    <button id="share" class="ghost">Share</button>
     <form id="submit-form">
       <input id="name" maxlength="20" placeholder="Your name" autocomplete="nickname" required>
       <button>Submit score</button>
@@ -59,14 +67,14 @@
 <script src="/game.js"></script>
 <script>
 let s = null;     // state from the server
-let shown = null; // the question just answered, kept on screen until Next: { q, n, choice, correct }
+let shown = null; // the question just answered, kept on screen until Next: { q, n, choice, correct, explain }
 
 async function api(path, body) {
   const res = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
   return [res.status, await res.json()];
 }
 
-function renderQuestion(q, n, choice, correct) {
+function renderQuestion(q, n, choice, correct, explain = '') {
   $('worth').textContent = `Question ${n + 1} of ${s.total}${q.points ? ` · ${q.points} pts` : ''}`;
   $('q').textContent = q.q;
   const box = $('options');
@@ -80,6 +88,7 @@ function renderQuestion(q, n, choice, correct) {
     box.append(b);
   });
   $('status').textContent = choice === null || correct === null ? '' : choice === correct ? `+${q.points}` : 'Wrong';
+  $('explain').textContent = explain;
 }
 
 function render() {
@@ -89,23 +98,36 @@ function render() {
   show('done', !q);
   show('next', !!shown);
   if (shown) {
-    renderQuestion(shown.q, shown.n, shown.choice, shown.correct);
+    renderQuestion(shown.q, shown.n, shown.choice, shown.correct, shown.explain);
     $('next').textContent = s.question ? 'Next question' : 'See your score';
   } else if (q) {
     renderQuestion(q, s.n, null, null);
   } else {
     $('final').textContent = `You scored ${s.score} of ${s.max}`;
+    $('card').textContent = cardText();
     show('submit-form', !s.submitted);
     $('submitted').textContent = s.submitted ? `Submitted as ${s.submitted.name}. You're #${s.submitted.rank}.` : '';
     const ul = $('board');
     ul.textContent = '';
     for (const e of s.top) {
-      const li = el('li');
+      const li = el('li', e.you ? 'you' : null);
       li.append(el('span', null, `${e.rank}. ${e.name}${e.you ? ' (you)' : ''}`), el('span', null, e.score));
       ul.append(li);
     }
+    // Scroll the list, not the page, to your row.
+    const you = ul.querySelector('.you');
+    if (you) ul.scrollTop = you.offsetTop - ul.clientHeight / 2;
   }
 }
+
+const cardText = () => s.results.map((r) => (r === null ? '⬜' : r ? '🟩' : '🟥')).join('');
+
+$('share').onclick = async () => {
+  const text = `Hit or Miss trivia: ${s.score}/${s.max}\n${cardText()}\n${location.origin}/trivia`;
+  if (navigator.share) return navigator.share({ text }).catch(() => {});
+  await navigator.clipboard.writeText(text);
+  $('share').textContent = 'Copied';
+};
 
 async function load() {
   [, s] = await api('/api/trivia/state');
@@ -116,7 +138,7 @@ async function pick(choice) {
   const q = s.question;
   const n = s.n;
   const [code, body] = await api('/api/trivia/answer', { i: n, choice });
-  if (code === 200) shown = { q, n, choice: body.choice, correct: body.correct };
+  if (code === 200) shown = { q, n, choice: body.choice, correct: body.correct, explain: body.explain };
   await load();
 }
 

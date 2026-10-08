@@ -22,6 +22,7 @@ function newRound(r) {
     n: r.n, start: r.start, q: r.q, options: r.options, points: r.points, guesses: {},
     myChoice: r.myChoice == null ? null : Number(r.myChoice),
     correct: r.correct ?? null,
+    explain: r.explain ?? null,
     ended: !!r.ended,
   };
   for (const g of r.guesses ?? []) round.guesses[g.pid] = g;
@@ -40,7 +41,7 @@ function followRounds(es, render, onEnd, onReset) {
   on('round', (d) => { if (round?.n === d.n) return; syncClock(d.serverNow); round = newRound(d); });
   on('reveal', (d) => { for (const g of d.guesses) round.guesses[g.pid] = g; });
   on('guess', (d) => { round.guesses[d.pid] = d; });
-  on('end', (d) => { round.correct = d.correct; round.ended = true; onEnd(d); });
+  on('end', (d) => { round.correct = d.correct; round.explain = d.explain; round.ended = true; onEnd(d); });
   on('reset', () => { round = null; onReset(); });
 }
 

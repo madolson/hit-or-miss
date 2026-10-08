@@ -73,6 +73,7 @@
       <div class="controls">
         <button id="show-questions" class="ghost">Questions</button>
         <button id="reset" class="ghost">Reset game</button>
+        <button id="reset-trivia" class="ghost">Reset trivia</button>
         <button id="logout" class="ghost">Log out</button>
       </div>
       <p id="host-status" class="muted"></p>
@@ -102,6 +103,7 @@
       <h1 id="q"></h1>
       <div class="bar"><div id="bar"></div></div>
       <div class="options" id="options"></div>
+      <p class="rules" id="explain"></p>
     </div>
     <div class="card board-card">
       <h3 id="board-title">Leaderboard</h3>
@@ -161,6 +163,7 @@ function render() {
   $('worth').textContent = round.points ? `${round.points} pts` : '';
   $('q').textContent = round.q;
   renderOptions($('options'), round, null);
+  $('explain').textContent = round.ended ? round.explain ?? '' : '';
 }
 
 function renderQuestions(qs) {
@@ -249,6 +252,12 @@ $('reset').onclick = async () => {
   if (!confirm('Reset the game? This removes every player and score.')) return;
   const res = await hostApi('/api/host/reset');
   $('host-status').textContent = res.ok ? 'Game reset.' : (await res.json()).error;
+};
+
+$('reset-trivia').onclick = async () => {
+  if (!confirm('Reset trivia? This removes every trivia score and lets everyone play again.')) return;
+  const res = await hostApi('/api/host/reset-trivia');
+  $('host-status').textContent = res.ok ? 'Trivia reset.' : (await res.json()).error;
 };
 
 $('close-questions').onclick = () => show('questions', false);
