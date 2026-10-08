@@ -123,7 +123,7 @@ function render() {
 const cardText = () => s.results.map((r) => (r === null ? '⬜' : r ? '🟩' : '🟥')).join('');
 
 $('share').onclick = async () => {
-  const text = `Hit or Miss trivia: ${s.score}/${s.max}\n${cardText()}\n${location.origin}/trivia`;
+  const text = `Hit or Miss trivia: ${s.score}/${s.max}\n${cardText()}`;
   if (navigator.share) return navigator.share({ text }).catch(() => {});
   await navigator.clipboard.writeText(text);
   $('share').textContent = 'Copied';
